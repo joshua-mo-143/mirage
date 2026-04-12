@@ -6,6 +6,7 @@ use std::process::Command;
 use std::{path::PathBuf, sync::Arc};
 use thiserror::Error;
 
+/// Arguments accepted by the `prompt_cursor` tool.
 #[derive(Debug, Deserialize)]
 pub struct PromptCursorArgs {
     prompt: String,
@@ -13,6 +14,7 @@ pub struct PromptCursorArgs {
     cwd: Option<String>,
 }
 
+/// Concrete Cursor CLI invocation derived from a `prompt_cursor` request.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct PromptCursorInvocation {
     program: String,
@@ -20,6 +22,7 @@ struct PromptCursorInvocation {
     cwd: Option<PathBuf>,
 }
 
+/// Errors returned while invoking the local Cursor CLI in print mode.
 #[derive(Debug, Error)]
 pub enum PromptCursorToolError {
     #[error("failed to start Cursor CLI: {0}")]
@@ -32,12 +35,14 @@ pub enum PromptCursorToolError {
     CommandFailed { status: i32, stderr: String },
 }
 
+/// Tool implementation that delegates a task to the local Cursor CLI and returns its final output.
 #[derive(Clone)]
 pub struct PromptCursorTool {
     session_store: Arc<CursorSessionStore>,
 }
 
 impl PromptCursorTool {
+    /// Creates a prompt tool backed by a shared Cursor session cache.
     pub fn new(session_store: Arc<CursorSessionStore>) -> Self {
         Self { session_store }
     }
@@ -50,6 +55,7 @@ impl Tool for PromptCursorTool {
     type Args = PromptCursorArgs;
     type Output = String;
 
+    /// Returns the schema exposed to the model for the `prompt_cursor` tool.
     async fn definition(&self, _prompt: String) -> ToolDefinition {
         ToolDefinition {
             name: Self::NAME.to_owned(),
@@ -73,12 +79,14 @@ impl Tool for PromptCursorTool {
         }
     }
 
+    /// Executes the requested Cursor CLI prompt inside a blocking task.
     async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
         let session_store = self.session_store.clone();
         tokio::task::spawn_blocking(move || run_prompt_cursor(args, session_store)).await?
     }
 }
 
+/// Executes a `prompt_cursor` request synchronously inside a blocking task.
 fn run_prompt_cursor(
     args: PromptCursorArgs,
     session_store: Arc<CursorSessionStore>,
@@ -104,6 +112,7 @@ fn run_prompt_cursor(
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned())
 }
 
+/// Builds the concrete process invocation for a `prompt_cursor` request.
 fn build_prompt_cursor_invocation(
     prompt: &str,
     cwd: Option<&str>,
@@ -125,6 +134,7 @@ fn build_prompt_cursor_invocation(
 mod tests {
     use super::build_prompt_cursor_invocation;
 
+    /// Verifies that prompt invocations include the expected resume flag and working directory.
     #[test]
     fn builds_prompt_cursor_command() {
         let invocation =
@@ -141,6 +151,7 @@ mod tests {
         );
     }
 
+    /// Verifies that prompt invocations omit the working directory when one is not provided.
     #[test]
     fn builds_prompt_cursor_command_without_cwd() {
         let invocation = build_prompt_cursor_invocation("Hello", None, "chat-456");

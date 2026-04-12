@@ -1,5 +1,6 @@
 use clap::Parser;
 
+/// Command-line arguments accepted by the Mirage TUI client.
 #[derive(Debug, Parser)]
 #[command(about = "Interactive Venice chat with a Cursor-style terminal UI")]
 pub(crate) struct Args {

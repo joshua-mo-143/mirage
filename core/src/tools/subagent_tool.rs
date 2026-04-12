@@ -15,6 +15,7 @@ use tokio::{
     sync::mpsc,
 };
 
+/// Arguments accepted by the `subagent` tool.
 #[derive(Debug, Deserialize)]
 pub struct SubagentArgs {
     prompt: String,
@@ -26,6 +27,7 @@ pub struct SubagentArgs {
     mode: Option<String>,
 }
 
+/// Concrete Cursor CLI invocation derived from a `subagent` request.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct SubagentInvocation {
     program: String,
@@ -33,6 +35,7 @@ struct SubagentInvocation {
     cwd: Option<PathBuf>,
 }
 
+/// Errors returned while running a child Cursor agent.
 #[derive(Debug, Error)]
 pub enum SubagentToolError {
     #[error("failed to spawn subagent: {0}")]
@@ -53,6 +56,7 @@ pub enum SubagentToolError {
     MissingStderr,
 }
 
+/// Tool implementation that spawns a child Cursor agent and forwards progress events back to Mirage.
 #[derive(Clone)]
 pub struct SubagentTool {
     progress_tx: mpsc::UnboundedSender<SubagentProgressEvent>,
@@ -60,6 +64,7 @@ pub struct SubagentTool {
 }
 
 impl SubagentTool {
+    /// Creates a subagent tool backed by a progress channel and shared Cursor session cache.
     pub fn new(
         progress_tx: mpsc::UnboundedSender<SubagentProgressEvent>,
         session_store: Arc<CursorSessionStore>,
@@ -78,6 +83,7 @@ impl Tool for SubagentTool {
     type Args = SubagentArgs;
     type Output = String;
 
+    /// Returns the schema exposed to the model for the `subagent` tool.
     async fn definition(&self, _prompt: String) -> ToolDefinition {
         ToolDefinition {
             name: Self::NAME.to_owned(),
@@ -108,11 +114,13 @@ impl Tool for SubagentTool {
         }
     }
 
+    /// Runs the delegated child-agent task and returns its final answer.
     async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
         run_subagent(args, self.progress_tx.clone(), self.session_store.clone()).await
     }
 }
 
+/// Spawns and supervises a child Cursor agent for a delegated task.
 async fn run_subagent(
     args: SubagentArgs,
     progress_tx: mpsc::UnboundedSender<SubagentProgressEvent>,
@@ -205,6 +213,7 @@ async fn run_subagent(
     Ok(result)
 }
 
+/// Builds the concrete process invocation for a `subagent` request.
 fn build_subagent_invocation(args: &SubagentArgs, session_id: &str) -> SubagentInvocation {
     let mut invocation_args = vec![
         "-p".to_owned(),
@@ -240,6 +249,7 @@ fn build_subagent_invocation(args: &SubagentArgs, session_id: &str) -> SubagentI
     }
 }
 
+/// Parses a single streamed JSON line emitted by the child Cursor agent.
 fn handle_stream_json_line(
     id: &str,
     line: &str,
@@ -308,6 +318,7 @@ fn handle_stream_json_line(
     Ok(())
 }
 
+/// Extracts assistant text from a streamed Cursor JSON event.
 fn extract_text(value: &Value) -> String {
     value
         .pointer("/message/content")
@@ -319,6 +330,7 @@ fn extract_text(value: &Value) -> String {
         .join("")
 }
 
+/// Extracts a human-readable tool description from a streamed Cursor JSON event.
 fn extract_tool_description(value: &Value) -> String {
     value
         .pointer("/tool_call/shellToolCall/args/description")
@@ -332,6 +344,7 @@ fn extract_tool_description(value: &Value) -> String {
         .to_owned()
 }
 
+/// Extracts a short stdout excerpt from a completed child tool call event.
 fn extract_tool_output_excerpt(value: &Value) -> Option<String> {
     value
         .pointer("/tool_call/shellToolCall/result/success/stdout")
@@ -341,6 +354,7 @@ fn extract_tool_output_excerpt(value: &Value) -> Option<String> {
         .map(|text| truncate_text(text, 160))
 }
 
+/// Generates a best-effort unique identifier for a child agent run.
 fn unique_subagent_id() -> String {
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -349,6 +363,7 @@ fn unique_subagent_id() -> String {
     format!("subagent-{nanos}")
 }
 
+/// Truncates text to a bounded character count while preserving a visual ellipsis.
 fn truncate_text(value: &str, max_chars: usize) -> String {
     let total = value.chars().count();
     if total <= max_chars {
@@ -366,6 +381,7 @@ mod tests {
     };
     use tokio::sync::mpsc;
 
+    /// Verifies that optional subagent CLI flags are translated into the expected command line.
     #[test]
     fn builds_subagent_command_with_optional_flags() {
         let invocation = build_subagent_invocation(
@@ -404,6 +420,7 @@ mod tests {
         );
     }
 
+    /// Verifies that streamed assistant deltas are forwarded as progress events.
     #[test]
     fn forwards_partial_assistant_deltas() {
         let (tx, mut rx) = mpsc::unbounded_channel();
@@ -430,6 +447,7 @@ mod tests {
         assert!(result_error.is_none());
     }
 
+    /// Verifies that a successful streamed result captures the child agent's final answer.
     #[test]
     fn captures_successful_result() {
         let (tx, _rx) = mpsc::unbounded_channel();

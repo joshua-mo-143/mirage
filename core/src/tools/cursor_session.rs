@@ -7,18 +7,21 @@ use std::{
 };
 use thiserror::Error;
 
+/// Stores Cursor chat session ids keyed by workspace so local tool calls can resume prior conversations.
 #[derive(Debug, Default)]
 pub struct CursorSessionStore {
     sessions: Mutex<HashMap<SessionKey, String>>,
 }
 
 impl CursorSessionStore {
+    /// Drops all cached session ids.
     pub fn clear(&self) {
         if let Ok(mut sessions) = self.sessions.lock() {
             sessions.clear();
         }
     }
 
+    /// Returns the number of cached workspace-to-session mappings.
     pub fn len(&self) -> usize {
         self.sessions
             .lock()
@@ -26,6 +29,7 @@ impl CursorSessionStore {
             .unwrap_or(0)
     }
 
+    /// Returns an existing session id for a workspace or creates a new Cursor chat on demand.
     pub fn get_or_create_blocking(&self, cwd: Option<&str>) -> Result<String, CursorSessionError> {
         let key = SessionKey::from_cwd(cwd)?;
 
@@ -41,6 +45,7 @@ impl CursorSessionStore {
         Ok(sessions.entry(key).or_insert(created).clone())
     }
 
+    /// Looks up a cached session id for the given normalized workspace key.
     fn get(&self, key: &SessionKey) -> Result<Option<String>, CursorSessionError> {
         let sessions = self
             .sessions
@@ -50,16 +55,19 @@ impl CursorSessionStore {
     }
 }
 
+/// Normalized workspace key used for Cursor session reuse.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct SessionKey(Option<PathBuf>);
 
 impl SessionKey {
+    /// Builds a workspace key from an optional current working directory string.
     fn from_cwd(cwd: Option<&str>) -> Result<Self, CursorSessionError> {
         let path = cwd.map(normalize_path).transpose()?;
         Ok(Self(path))
     }
 }
 
+/// Resolves a relative or absolute workspace path into a normalized absolute path.
 fn normalize_path(path: &str) -> Result<PathBuf, CursorSessionError> {
     let raw = Path::new(path);
     if raw.is_absolute() {
@@ -69,6 +77,7 @@ fn normalize_path(path: &str) -> Result<PathBuf, CursorSessionError> {
     }
 }
 
+/// Invokes `agent create-chat` and returns the resulting Cursor chat id.
 fn create_chat_blocking() -> Result<String, CursorSessionError> {
     let output = Command::new("agent").arg("create-chat").output()?;
     if !output.status.success() {
@@ -87,6 +96,7 @@ fn create_chat_blocking() -> Result<String, CursorSessionError> {
     Ok(session_id)
 }
 
+/// Describes failures that can occur while resolving or creating Cursor chat sessions.
 #[derive(Debug, Error)]
 pub enum CursorSessionError {
     #[error("failed to create or resolve Cursor session: {0}")]
@@ -103,12 +113,14 @@ pub enum CursorSessionError {
 mod tests {
     use super::SessionKey;
 
+    /// Verifies that absolute workspace paths are preserved when deriving a session key.
     #[test]
     fn session_key_preserves_absolute_paths() {
         let key = SessionKey::from_cwd(Some("/tmp/project")).unwrap();
         assert_eq!(key.0.as_deref(), Some(std::path::Path::new("/tmp/project")));
     }
 
+    /// Verifies that relative workspace paths are normalized against the current directory.
     #[test]
     fn session_key_normalizes_relative_paths_against_current_dir() {
         let expected = std::env::current_dir().unwrap().join("client");

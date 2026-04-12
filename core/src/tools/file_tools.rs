@@ -7,6 +7,7 @@ use std::{
 };
 use thiserror::Error;
 
+/// Arguments accepted by the `read_file` tool.
 #[derive(Debug, Deserialize)]
 pub struct ReadFileArgs {
     path: String,
@@ -16,6 +17,7 @@ pub struct ReadFileArgs {
     line_count: Option<usize>,
 }
 
+/// Arguments accepted by the `write_file` tool.
 #[derive(Debug, Deserialize)]
 pub struct WriteFileArgs {
     path: String,
@@ -28,6 +30,7 @@ pub struct WriteFileArgs {
     create_parent_directories: bool,
 }
 
+/// Arguments accepted by the `edit_file` tool.
 #[derive(Debug, Deserialize)]
 pub struct EditFileArgs {
     path: String,
@@ -37,6 +40,7 @@ pub struct EditFileArgs {
     replace_all: bool,
 }
 
+/// Errors returned by the local file tools.
 #[derive(Debug, Error)]
 pub enum FileToolError {
     #[error("failed to access file: {0}")]
@@ -63,6 +67,7 @@ pub enum FileToolError {
     Join(#[from] tokio::task::JoinError),
 }
 
+/// Tool implementation that reads UTF-8 text files.
 pub struct ReadFileTool;
 
 impl Tool for ReadFileTool {
@@ -72,6 +77,7 @@ impl Tool for ReadFileTool {
     type Args = ReadFileArgs;
     type Output = String;
 
+    /// Returns the schema exposed to the model for the `read_file` tool.
     async fn definition(&self, _prompt: String) -> ToolDefinition {
         ToolDefinition {
             name: Self::NAME.to_owned(),
@@ -98,11 +104,13 @@ impl Tool for ReadFileTool {
         }
     }
 
+    /// Executes the requested file read inside a blocking task.
     async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
         tokio::task::spawn_blocking(move || read_text_file(args)).await?
     }
 }
 
+/// Tool implementation that performs whole-file writes or appends.
 pub struct WriteFileTool;
 
 impl Tool for WriteFileTool {
@@ -112,6 +120,7 @@ impl Tool for WriteFileTool {
     type Args = WriteFileArgs;
     type Output = String;
 
+    /// Returns the schema exposed to the model for the `write_file` tool.
     async fn definition(&self, _prompt: String) -> ToolDefinition {
         ToolDefinition {
             name: Self::NAME.to_owned(),
@@ -145,11 +154,13 @@ impl Tool for WriteFileTool {
         }
     }
 
+    /// Executes the requested whole-file write inside a blocking task.
     async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
         tokio::task::spawn_blocking(move || write_text_file(args)).await?
     }
 }
 
+/// Tool implementation that performs targeted text replacement in an existing file.
 pub struct EditFileTool;
 
 impl Tool for EditFileTool {
@@ -159,6 +170,7 @@ impl Tool for EditFileTool {
     type Args = EditFileArgs;
     type Output = String;
 
+    /// Returns the schema exposed to the model for the `edit_file` tool.
     async fn definition(&self, _prompt: String) -> ToolDefinition {
         ToolDefinition {
             name: Self::NAME.to_owned(),
@@ -188,11 +200,13 @@ impl Tool for EditFileTool {
         }
     }
 
+    /// Executes the requested targeted file edit inside a blocking task.
     async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
         tokio::task::spawn_blocking(move || edit_text_file(args)).await?
     }
 }
 
+/// Reads a UTF-8 text file and optionally slices the result by line range.
 fn read_text_file(args: ReadFileArgs) -> Result<String, FileToolError> {
     let path = resolve_path(&args.path)?;
     let content = fs::read_to_string(&path)?;
@@ -232,6 +246,7 @@ fn read_text_file(args: ReadFileArgs) -> Result<String, FileToolError> {
         .join("\n"))
 }
 
+/// Writes or appends UTF-8 text to a file while enforcing overwrite safeguards.
 fn write_text_file(args: WriteFileArgs) -> Result<String, FileToolError> {
     let path = resolve_path(&args.path)?;
 
@@ -268,6 +283,7 @@ fn write_text_file(args: WriteFileArgs) -> Result<String, FileToolError> {
     ))
 }
 
+/// Replaces text in an existing file, either once or for every matching occurrence.
 fn edit_text_file(args: EditFileArgs) -> Result<String, FileToolError> {
     if args.old_text.is_empty() {
         return Err(FileToolError::EmptyOldText);
@@ -303,6 +319,7 @@ fn edit_text_file(args: EditFileArgs) -> Result<String, FileToolError> {
     ))
 }
 
+/// Resolves a relative or absolute user path into an absolute filesystem path.
 fn resolve_path(path: &str) -> Result<PathBuf, FileToolError> {
     if path.trim().is_empty() {
         return Err(FileToolError::EmptyPath);
@@ -327,6 +344,7 @@ mod tests {
         time::{SystemTime, UNIX_EPOCH},
     };
 
+    /// Builds a unique temporary file path for a file tool test case.
     fn unique_test_path(name: &str) -> PathBuf {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -335,6 +353,7 @@ mod tests {
         std::env::temp_dir().join(format!("mirage-{name}-{}-{nanos}", std::process::id()))
     }
 
+    /// Verifies that reading a subset of lines preserves the requested line numbers.
     #[test]
     fn reads_line_ranges_with_numbers() {
         let path = unique_test_path("read");
@@ -352,6 +371,7 @@ mod tests {
         let _ = fs::remove_file(path);
     }
 
+    /// Verifies that file writes can create a file and later append additional content.
     #[test]
     fn writes_and_appends_file_contents() {
         let path = unique_test_path("write");
@@ -380,6 +400,7 @@ mod tests {
         let _ = fs::remove_file(path);
     }
 
+    /// Verifies that overwriting an existing file requires explicit confirmation.
     #[test]
     fn write_file_requires_explicit_overwrite_for_existing_files() {
         let path = unique_test_path("overwrite-guard");
@@ -400,6 +421,7 @@ mod tests {
         let _ = fs::remove_file(path);
     }
 
+    /// Verifies that an existing file can be overwritten when explicit intent is provided.
     #[test]
     fn write_file_can_explicitly_overwrite_existing_files() {
         let path = unique_test_path("overwrite");
@@ -420,6 +442,7 @@ mod tests {
         let _ = fs::remove_file(path);
     }
 
+    /// Verifies that a targeted edit succeeds when the old text matches exactly once.
     #[test]
     fn edits_unique_match_in_existing_file() {
         let path = unique_test_path("edit");
@@ -439,6 +462,7 @@ mod tests {
         let _ = fs::remove_file(path);
     }
 
+    /// Verifies that ambiguous edits fail unless the caller explicitly requests replacement of all matches.
     #[test]
     fn edit_file_requires_unique_match_without_replace_all() {
         let path = unique_test_path("edit-ambiguous");
@@ -457,6 +481,7 @@ mod tests {
         let _ = fs::remove_file(path);
     }
 
+    /// Verifies that `replace_all` updates every matching occurrence in the target file.
     #[test]
     fn edit_file_can_replace_all_matches() {
         let path = unique_test_path("edit-all");

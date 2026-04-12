@@ -13,12 +13,14 @@ mod state;
 #[cfg(test)]
 mod tests;
 
+/// Identifies which part of the TUI currently owns keyboard focus.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum FocusArea {
     Composer,
     Transcript,
 }
 
+/// Describes how the transcript viewport should choose its current scroll offset.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum TranscriptScrollMode {
     FollowTail,
@@ -26,6 +28,7 @@ pub(crate) enum TranscriptScrollMode {
     Manual,
 }
 
+/// Top-level client application state used by the Mirage TUI.
 pub(crate) struct App {
     pub(crate) service: SessionService,
     pub(crate) backend_description: String,

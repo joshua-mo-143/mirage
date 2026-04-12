@@ -22,6 +22,7 @@ use crate::{
     tui::Tui,
 };
 
+/// Parses configuration, selects the active backend, and runs the Mirage TUI loop.
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
     let args = Args::parse();
@@ -145,6 +146,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+/// Resolves the remote server configuration from flags, saved config, or a just-launched server.
 fn resolve_remote_config(
     args: &Args,
     client_config: &ClientConfig,
@@ -181,6 +183,7 @@ fn resolve_remote_config(
     }
 }
 
+/// Computes the remote server configuration used for start or restart flows.
 fn remote_config_for_start(args: &Args, client_config: &ClientConfig) -> RemoteServerConfig {
     let saved = client_config.remote.as_ref();
     let server_url = args

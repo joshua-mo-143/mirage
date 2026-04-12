@@ -35,6 +35,7 @@ use tokio::{
     time::sleep,
 };
 
+/// Events emitted by either the local or remote backend into the UI event loop.
 pub(crate) enum BackendEvent {
     Stream(StreamEvent),
     Subagent(SubagentProgressEvent),
@@ -42,12 +43,14 @@ pub(crate) enum BackendEvent {
     RemoteError(String),
 }
 
+/// Active backend implementation used by the Mirage client.
 pub(crate) enum ClientBackend {
     Local(LocalBackend),
     Remote(RemoteBackend),
 }
 
 impl ClientBackend {
+    /// Returns a human-readable description of the active backend.
     pub(crate) fn description(&self) -> String {
         match self {
             Self::Local(_) => "local".to_owned(),
@@ -55,6 +58,7 @@ impl ClientBackend {
         }
     }
 
+    /// Submits a prompt through whichever backend is currently active.
     pub(crate) fn submit_prompt(&mut self, service: &mut SessionService, prompt: String) {
         match self {
             Self::Local(backend) => backend.submit_prompt(service, prompt),
@@ -62,6 +66,7 @@ impl ClientBackend {
         }
     }
 
+    /// Clears the current conversation using the active backend semantics.
     pub(crate) fn clear_conversation(&mut self, service: &mut SessionService) {
         match self {
             Self::Local(backend) => backend.clear_conversation(service),
@@ -70,6 +75,7 @@ impl ClientBackend {
     }
 }
 
+/// Builds either a local or remote backend along with its initial service state.
 pub(crate) async fn build_backend(
     args: &Args,
     cursor_sessions: Arc<CursorSessionStore>,
@@ -89,6 +95,7 @@ pub(crate) async fn build_backend(
     Ok((service, ClientBackend::Local(backend)))
 }
 
+/// Starts a local Mirage server process if one is not already reachable.
 pub(crate) async fn launch_local_server(
     remote: &RemoteServerConfig,
     debug_stream_log: Option<&str>,
@@ -142,6 +149,7 @@ pub(crate) async fn launch_local_server(
     })
 }
 
+/// Stops a configured Mirage server, preferring graceful shutdown when possible.
 pub(crate) async fn stop_server(
     remote: &RemoteServerConfig,
 ) -> Result<StopServerResult, Box<dyn Error>> {
@@ -186,21 +194,25 @@ pub(crate) async fn stop_server(
     })
 }
 
+/// Result returned after attempting to launch a local Mirage server.
 pub(crate) struct LaunchLocalServerResult {
     pub(crate) already_running: bool,
 }
 
+/// Result returned after attempting to stop a Mirage server.
 pub(crate) struct StopServerResult {
     pub(crate) stopped: bool,
     pub(crate) method: StopServerMethod,
 }
 
+/// Mechanism used to stop a Mirage server.
 pub(crate) enum StopServerMethod {
     HttpShutdown,
     LocalProcessKill,
     NotRunning,
 }
 
+/// In-process backend that runs the Venice agent directly inside the client.
 pub(crate) struct LocalBackend {
     agent: VeniceAgent,
     debug_logger: Option<StreamDebugLogger>,
@@ -208,6 +220,7 @@ pub(crate) struct LocalBackend {
 }
 
 impl LocalBackend {
+    /// Builds the local backend and configures the full local tool runtime.
     fn new(
         args: &Args,
         cursor_sessions: Arc<CursorSessionStore>,
@@ -278,6 +291,7 @@ impl LocalBackend {
         })
     }
 
+    /// Starts a local prompt run and forwards streamed events back into the UI loop.
     fn submit_prompt(&mut self, service: &mut SessionService, prompt: String) {
         let request = service.submit_prompt(prompt);
         let agent = self.agent.clone();
@@ -296,6 +310,7 @@ impl LocalBackend {
         });
     }
 
+    /// Clears the local conversation while preserving the backend instance.
     fn clear_conversation(&mut self, service: &mut SessionService) {
         service.clear_with_notice(
             "Conversation cleared, including Cursor session state.",
@@ -304,6 +319,7 @@ impl LocalBackend {
     }
 }
 
+/// Remote HTTP/SSE backend that talks to a Mirage server.
 pub(crate) struct RemoteBackend {
     http_client: reqwest::Client,
     server_url: String,
@@ -313,12 +329,14 @@ pub(crate) struct RemoteBackend {
     tx: mpsc::UnboundedSender<BackendEvent>,
 }
 
+/// Mutable state associated with the currently connected remote session.
 struct RemoteSessionState {
     session_id: String,
     events_task: Option<JoinHandle<()>>,
 }
 
 impl RemoteBackend {
+    /// Connects to a remote Mirage server and creates the initial session.
     async fn connect(
         args: &Args,
         remote: RemoteServerConfig,
@@ -346,6 +364,7 @@ impl RemoteBackend {
         Ok((service, backend))
     }
 
+    /// Submits a prompt to the currently selected remote session.
     fn submit_prompt(&self, service: &mut SessionService, prompt: String) {
         service.session_mut().streaming = true;
         service.session_mut().status = "Submitting remote request...".to_owned();
@@ -381,6 +400,7 @@ impl RemoteBackend {
         });
     }
 
+    /// Clears the remote conversation by creating and switching to a new remote session.
     fn clear_conversation(&self, service: &mut SessionService) {
         service.session_mut().streaming = true;
         service.session_mut().status = "Creating new remote session...".to_owned();
@@ -423,6 +443,7 @@ impl RemoteBackend {
         });
     }
 
+    /// Restarts the SSE stream task for the provided remote session id.
     async fn restart_events_stream(&self, session_id: String) {
         let _ = replace_remote_session(
             &self.http_client,
@@ -436,6 +457,7 @@ impl RemoteBackend {
     }
 }
 
+/// Builds a service configuration from local client arguments.
 fn service_config_from_args(args: &Args) -> ServiceConfig {
     ServiceConfig {
         model: args.model.clone(),
@@ -447,6 +469,7 @@ fn service_config_from_args(args: &Args) -> ServiceConfig {
     }
 }
 
+/// Builds a service configuration from a remote session snapshot.
 fn service_config_from_snapshot(snapshot: &SessionSnapshot) -> ServiceConfig {
     ServiceConfig {
         model: snapshot.model.clone(),
@@ -458,6 +481,7 @@ fn service_config_from_snapshot(snapshot: &SessionSnapshot) -> ServiceConfig {
     }
 }
 
+/// Creates a new remote session through the Mirage server API.
 async fn create_remote_session(
     http_client: &reqwest::Client,
     remote: &RemoteServerConfig,
@@ -473,6 +497,7 @@ async fn create_remote_session(
     parse_json_response(response).await
 }
 
+/// Submits a prompt to an existing remote session through the Mirage server API.
 async fn submit_remote_message(
     http_client: &reqwest::Client,
     server_url: &str,
@@ -493,6 +518,7 @@ async fn submit_remote_message(
     parse_json_response(response).await
 }
 
+/// Replaces the tracked remote session id and restarts the associated SSE task.
 async fn replace_remote_session(
     http_client: &reqwest::Client,
     server_url: &str,
@@ -518,6 +544,7 @@ async fn replace_remote_session(
     Ok(())
 }
 
+/// Streams remote session snapshots from the server over SSE.
 async fn stream_remote_session_events(
     http_client: reqwest::Client,
     server_url: String,
@@ -587,6 +614,7 @@ async fn stream_remote_session_events(
     }
 }
 
+/// Extracts the next complete SSE frame from a buffered text stream.
 fn take_next_sse_frame(buffer: &mut String) -> Option<String> {
     if let Some(index) = buffer.find("\r\n\r\n") {
         let frame = buffer[..index].replace("\r\n", "\n");
@@ -603,6 +631,7 @@ fn take_next_sse_frame(buffer: &mut String) -> Option<String> {
     None
 }
 
+/// Extracts and joins `data:` lines from a single SSE frame.
 fn extract_sse_data(frame: &str) -> Option<String> {
     let data_lines = frame
         .lines()
@@ -617,6 +646,7 @@ fn extract_sse_data(frame: &str) -> Option<String> {
     }
 }
 
+/// Polls a Mirage server until it becomes healthy or the timeout expires.
 async fn wait_for_server(
     remote: &RemoteServerConfig,
     timeout: Duration,
@@ -648,6 +678,7 @@ async fn wait_for_server(
     ))
 }
 
+/// Polls a Mirage server until it stops responding or the timeout expires.
 async fn wait_for_server_stop(
     remote: &RemoteServerConfig,
     timeout: Duration,
@@ -672,6 +703,7 @@ async fn wait_for_server_stop(
     ))
 }
 
+/// Requests graceful shutdown from a Mirage server.
 async fn request_server_shutdown(remote: &RemoteServerConfig) -> Result<HealthResponse, String> {
     let response = reqwest::Client::new()
         .post(api_url(&remote.server_url, "/shutdown"))
@@ -682,6 +714,7 @@ async fn request_server_shutdown(remote: &RemoteServerConfig) -> Result<HealthRe
     parse_json_response(response).await
 }
 
+/// Decodes a JSON response body or converts HTTP and parsing failures into readable errors.
 async fn parse_json_response<T: DeserializeOwned>(
     response: reqwest::Response,
 ) -> Result<T, String> {
@@ -707,6 +740,7 @@ async fn parse_json_response<T: DeserializeOwned>(
         .map_err(|error| format!("failed to decode response: {error}"))
 }
 
+/// Decodes an error response body into a readable string.
 async fn decode_error_response(response: reqwest::Response) -> Result<String, String> {
     let status = response.status();
     let body = response
@@ -727,6 +761,7 @@ async fn decode_error_response(response: reqwest::Response) -> Result<String, St
     ))
 }
 
+/// Joins a server base URL with a relative API path.
 fn api_url(server_url: &str, path: &str) -> String {
     format!(
         "{}/{}",
@@ -735,6 +770,7 @@ fn api_url(server_url: &str, path: &str) -> String {
     )
 }
 
+/// Derives a bind address from a server URL.
 fn bind_addr_from_server_url(server_url: &str) -> Result<String, String> {
     let url = Url::parse(server_url).map_err(|error| format!("invalid server URL: {error}"))?;
     let host = url
@@ -746,6 +782,7 @@ fn bind_addr_from_server_url(server_url: &str) -> Result<String, String> {
     Ok(format!("{host}:{port}"))
 }
 
+/// Returns whether the server URL points at a loopback address.
 fn is_local_server_url(server_url: &str) -> bool {
     Url::parse(server_url)
         .ok()
@@ -753,6 +790,7 @@ fn is_local_server_url(server_url: &str) -> bool {
         .is_some_and(|host| matches!(host.as_str(), "127.0.0.1" | "localhost" | "::1"))
 }
 
+/// Attempts to terminate local Mirage server processes using `pkill`.
 fn kill_local_server_processes() -> Result<bool, Box<dyn Error>> {
     let output = std::process::Command::new("pkill")
         .arg("-f")
@@ -770,6 +808,7 @@ fn kill_local_server_processes() -> Result<bool, Box<dyn Error>> {
     }
 }
 
+/// Spawns a `mirage-server` binary with the required environment.
 fn spawn_server_command(
     command_name: &str,
     bind_addr: &str,
@@ -792,6 +831,7 @@ fn spawn_server_command(
         .map_err(|error| error.to_string())
 }
 
+/// Spawns the server through `cargo run -p mirage-server` as a fallback.
 fn spawn_server_cargo_fallback(
     workspace_root: &PathBuf,
     bind_addr: &str,
@@ -818,6 +858,7 @@ fn spawn_server_cargo_fallback(
         .map_err(|error| error.to_string())
 }
 
+/// Returns the workspace root if the client crate appears to live inside the Mirage workspace.
 fn workspace_root() -> Option<PathBuf> {
     let client_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let workspace_root = client_dir.parent()?.to_path_buf();
@@ -834,6 +875,7 @@ mod tests {
         take_next_sse_frame,
     };
 
+    /// Verifies that API URL joining avoids duplicate slashes.
     #[test]
     fn api_url_joins_without_duplicate_slashes() {
         assert_eq!(
@@ -842,6 +884,7 @@ mod tests {
         );
     }
 
+    /// Verifies that known default ports are inferred from the server URL scheme.
     #[test]
     fn bind_addr_uses_known_default_port() {
         assert_eq!(
@@ -850,6 +893,7 @@ mod tests {
         );
     }
 
+    /// Verifies loopback hostnames and addresses are treated as local servers.
     #[test]
     fn detects_local_server_urls() {
         assert!(is_local_server_url("http://127.0.0.1:3000"));
@@ -857,6 +901,7 @@ mod tests {
         assert!(!is_local_server_url("https://example.com"));
     }
 
+    /// Verifies SSE frame parsing extracts the expected payload text.
     #[test]
     fn extracts_sse_frames_and_data() {
         let mut buffer = "event: snapshot\ndata: {\"id\":\"1\"}\n\n".to_owned();

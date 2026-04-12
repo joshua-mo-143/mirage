@@ -5,6 +5,7 @@ use std::collections::HashMap;
 
 const DEFAULT_WELCOME_BODY: &str = "Type a message below. Use /help for commands. Built-in tools: `bash`, `prompt_cursor`, `subagent`, `read_file`, `edit_file`, `write_file` (whole-file writes only).";
 
+/// Categorizes transcript entries for rendering and serialization.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TranscriptKind {
     Meta,
@@ -14,6 +15,7 @@ pub enum TranscriptKind {
     Error,
 }
 
+/// Represents a single top-level transcript entry.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TranscriptEntry {
     pub kind: TranscriptKind,
@@ -22,6 +24,7 @@ pub struct TranscriptEntry {
 }
 
 impl TranscriptEntry {
+    /// Creates a metadata transcript entry.
     pub fn meta(title: impl Into<String>, body: impl Into<String>) -> Self {
         Self {
             kind: TranscriptKind::Meta,
@@ -30,6 +33,7 @@ impl TranscriptEntry {
         }
     }
 
+    /// Creates a user transcript entry.
     pub fn user(body: impl Into<String>) -> Self {
         Self {
             kind: TranscriptKind::User,
@@ -38,6 +42,7 @@ impl TranscriptEntry {
         }
     }
 
+    /// Creates an assistant transcript entry.
     pub fn assistant(body: impl Into<String>) -> Self {
         Self {
             kind: TranscriptKind::Assistant,
@@ -46,6 +51,7 @@ impl TranscriptEntry {
         }
     }
 
+    /// Creates a tool transcript entry.
     pub fn tool(title: impl Into<String>, body: impl Into<String>) -> Self {
         Self {
             kind: TranscriptKind::Tool,
@@ -54,6 +60,7 @@ impl TranscriptEntry {
         }
     }
 
+    /// Creates an error transcript entry.
     pub fn error(body: impl Into<String>) -> Self {
         Self {
             kind: TranscriptKind::Error,
@@ -62,6 +69,7 @@ impl TranscriptEntry {
         }
     }
 
+    /// Converts the entry into a plain-text block suitable for copying or persistence.
     pub fn to_plaintext(&self, title_indent: &str, body_indent: &str) -> String {
         let mut lines = vec![format!("{title_indent}{}", self.title)];
         if self.body.is_empty() {
@@ -75,6 +83,7 @@ impl TranscriptEntry {
     }
 }
 
+/// Represents a top-level transcript item, including collapsible subagent groups.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TranscriptItem {
     Entry(TranscriptEntry),
@@ -82,6 +91,7 @@ pub enum TranscriptItem {
 }
 
 impl TranscriptItem {
+    /// Returns a mutable reference to the contained entry if this item is not a subagent group.
     pub fn entry_mut(&mut self) -> Option<&mut TranscriptEntry> {
         match self {
             Self::Entry(entry) => Some(entry),
@@ -89,6 +99,7 @@ impl TranscriptItem {
         }
     }
 
+    /// Returns an immutable reference to the contained entry if this item is not a subagent group.
     pub fn entry(&self) -> Option<&TranscriptEntry> {
         match self {
             Self::Entry(entry) => Some(entry),
@@ -96,6 +107,7 @@ impl TranscriptItem {
         }
     }
 
+    /// Converts the transcript item into a plain-text block suitable for copying or persistence.
     pub fn to_plaintext(&self) -> String {
         match self {
             Self::Entry(entry) => entry.to_plaintext("", "  "),
@@ -104,6 +116,7 @@ impl TranscriptItem {
     }
 }
 
+/// Tracks the lifecycle state of a subagent group.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SubagentStatus {
     Running,
@@ -111,6 +124,7 @@ pub enum SubagentStatus {
     Failed,
 }
 
+/// Groups transcript entries produced by a child agent run.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SubagentGroup {
     pub summary: String,
@@ -120,6 +134,7 @@ pub struct SubagentGroup {
 }
 
 impl SubagentGroup {
+    /// Creates a new collapsed subagent group in the running state.
     pub fn new(summary: impl Into<String>) -> Self {
         Self {
             summary: summary.into(),
@@ -129,6 +144,7 @@ impl SubagentGroup {
         }
     }
 
+    /// Converts the subagent group into a plain-text block suitable for copying or persistence.
     pub fn to_plaintext(&self) -> String {
         let mut parts = vec![subagent_group_title(self)];
         for entry in &self.entries {
@@ -138,6 +154,7 @@ impl SubagentGroup {
     }
 }
 
+/// Describes streamed events emitted by a parent agent run.
 #[derive(Debug)]
 pub enum StreamEvent {
     AssistantText(String),
@@ -153,6 +170,7 @@ pub enum StreamEvent {
     Error(String),
 }
 
+/// Describes streamed progress events emitted by a child agent run.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SubagentProgressEvent {
     Started {
@@ -181,6 +199,7 @@ pub enum SubagentProgressEvent {
     },
 }
 
+/// Internal bookkeeping for an in-flight subagent group.
 #[derive(Debug)]
 struct PendingSubagent {
     transcript_index: usize,
@@ -191,11 +210,13 @@ struct PendingSubagent {
     latest_tool_description: String,
 }
 
+/// Internal bookkeeping for a tool call whose result has not arrived yet.
 #[derive(Debug)]
 struct PendingToolCall {
     transcript_index: usize,
 }
 
+/// Internal aggregation state for consecutive tool calls of the same kind.
 #[derive(Debug)]
 struct ToolAggregate {
     name: String,
@@ -205,6 +226,7 @@ struct ToolAggregate {
     pending_calls: usize,
 }
 
+/// Reducer-backed session state shared by the TUI, service layer, and server snapshots.
 #[derive(Debug)]
 pub struct Session {
     pub transcript: Vec<TranscriptItem>,
@@ -219,6 +241,7 @@ pub struct Session {
 }
 
 impl Session {
+    /// Creates a new session with the default welcome message and optional system prompt notice.
     pub fn new(system_prompt: Option<&str>) -> Self {
         let mut transcript = vec![TranscriptItem::Entry(TranscriptEntry::meta(
             "Mirage",
@@ -245,10 +268,12 @@ impl Session {
         }
     }
 
+    /// Appends a transcript entry as a new top-level item.
     pub fn push_entry(&mut self, entry: TranscriptEntry) {
         self.transcript.push(TranscriptItem::Entry(entry));
     }
 
+    /// Starts a new prompt submission and prepares the session for streamed events.
     pub fn begin_prompt(&mut self, prompt: String) {
         self.clear_active_tool_aggregates();
         self.push_entry(TranscriptEntry::user(prompt));
@@ -257,6 +282,7 @@ impl Session {
         self.status = "Streaming response...".to_owned();
     }
 
+    /// Clears conversational state and replaces the transcript with a single notice entry.
     pub fn clear_with_notice(
         &mut self,
         transcript_notice: impl Into<String>,
@@ -277,6 +303,7 @@ impl Session {
         self.status = status.into();
     }
 
+    /// Replaces the reducer state with a remote session snapshot payload.
     pub fn replace_remote_state(
         &mut self,
         transcript: Vec<TranscriptItem>,
@@ -293,10 +320,12 @@ impl Session {
         self.clear_active_tool_aggregates();
     }
 
+    /// Returns the plain-text serialization of a single transcript item by index.
     pub fn transcript_text(&self, index: usize) -> Option<String> {
         self.transcript.get(index).map(TranscriptItem::to_plaintext)
     }
 
+    /// Returns the plain-text serialization of the entire transcript.
     pub fn full_transcript_text(&self) -> String {
         self.transcript
             .iter()
@@ -305,6 +334,7 @@ impl Session {
             .join("\n\n")
     }
 
+    /// Applies one parent-agent stream event to the reducer state.
     pub fn apply_stream_event(&mut self, event: StreamEvent) {
         match event {
             StreamEvent::AssistantText(text) => {
@@ -370,6 +400,7 @@ impl Session {
         }
     }
 
+    /// Applies one child-agent progress event to the reducer state.
     pub fn apply_subagent_event(&mut self, event: SubagentProgressEvent) {
         match event {
             SubagentProgressEvent::Started { id, summary } => {
@@ -446,6 +477,7 @@ impl Session {
         }
     }
 
+    /// Creates a new subagent group and tracks it as in-flight.
     fn push_subagent_group(&mut self, id: String, summary: String) {
         let transcript_index = self.transcript.len();
         self.transcript
@@ -463,6 +495,7 @@ impl Session {
         );
     }
 
+    /// Looks up an in-flight subagent group and applies an update closure to it.
     fn update_subagent_group<R>(
         &mut self,
         id: &str,
@@ -477,11 +510,13 @@ impl Session {
         Some(update(group, pending))
     }
 
+    /// Clears all active top-level tool aggregation state.
     fn clear_active_tool_aggregates(&mut self) {
         self.pending_tool_calls.clear();
         self.active_tool_aggregates.clear();
     }
 
+    /// Recomputes the visible title for an aggregated top-level tool transcript entry.
     fn update_tool_aggregate_title(&mut self, transcript_index: usize) {
         let Some(aggregate) = self.active_tool_aggregates.get(&transcript_index) else {
             return;
@@ -501,6 +536,7 @@ impl Session {
         }
     }
 
+    /// Records the start of a tool call and merges it into the current tool aggregation group when possible.
     fn record_tool_call(&mut self, id: String, name: String, summary: String) {
         let label = tool_label(&name).to_owned();
         let detail = tool_detail_from_summary(&summary);
@@ -536,6 +572,7 @@ impl Session {
         self.update_tool_aggregate_title(transcript_index);
     }
 
+    /// Records the completion of a previously seen tool call.
     fn record_tool_result(&mut self, id: String) {
         let Some(pending) = self.pending_tool_calls.remove(&id) else {
             self.push_entry(TranscriptEntry::tool(
@@ -554,6 +591,7 @@ impl Session {
         self.update_tool_aggregate_title(pending.transcript_index);
     }
 
+    /// Recomputes the visible title for an aggregated child-agent tool transcript entry.
     fn update_subagent_tool_title(group: &mut SubagentGroup, pending: &mut PendingSubagent) {
         if pending.tool_call_count == 0 && pending.tool_entry_index.is_none() {
             return;
@@ -579,6 +617,7 @@ impl Session {
     }
 }
 
+/// Summarizes a tool call into the human-readable title Mirage displays in transcripts.
 pub fn summarize_tool_call(name: &str, arguments: &impl std::fmt::Display) -> String {
     let arguments_text = arguments.to_string();
     let json = serde_json::from_str::<Value>(&arguments_text).ok();
@@ -615,6 +654,7 @@ pub fn summarize_tool_call(name: &str, arguments: &impl std::fmt::Display) -> St
     }
 }
 
+/// Formats the visible title for a subagent group.
 fn subagent_group_title(group: &SubagentGroup) -> String {
     let marker = if group.expanded { "[-]" } else { "[+]" };
     let status = match group.status {
@@ -629,6 +669,7 @@ fn subagent_group_title(group: &SubagentGroup) -> String {
     )
 }
 
+/// Maps a tool name to its display label.
 fn tool_label(name: &str) -> &'static str {
     match name {
         "read_file" => "File read",
@@ -641,6 +682,7 @@ fn tool_label(name: &str) -> &'static str {
     }
 }
 
+/// Strips the label prefix from a tool summary to leave just the detail portion.
 fn tool_detail_from_summary(summary: &str) -> String {
     summary
         .split_once(": ")
@@ -648,6 +690,7 @@ fn tool_detail_from_summary(summary: &str) -> String {
         .unwrap_or_else(|| summary.to_owned())
 }
 
+/// Formats the visible title for an aggregated top-level tool entry.
 fn render_tool_aggregate_title(
     label: &str,
     latest_detail: &str,
@@ -674,6 +717,7 @@ fn render_tool_aggregate_title(
     }
 }
 
+/// Formats the visible title for an aggregated child-agent tool entry.
 fn render_subagent_tool_aggregate_title(
     latest_description: &str,
     total_calls: usize,
@@ -702,6 +746,7 @@ fn render_subagent_tool_aggregate_title(
     }
 }
 
+/// Extracts and truncates a named string field from tool arguments.
 fn summarize_argument_field(json: &Option<Value>, field: &str, fallback: &str) -> String {
     json.as_ref()
         .and_then(|value| value.get(field))
@@ -710,10 +755,12 @@ fn summarize_argument_field(json: &Option<Value>, field: &str, fallback: &str) -
         .unwrap_or_else(|| truncate_text(&single_line(fallback), 80))
 }
 
+/// Collapses arbitrary whitespace into a single-line string.
 fn single_line(value: &str) -> String {
     value.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
+/// Truncates a string to a maximum character count with an ellipsis.
 fn truncate_text(value: &str, max_chars: usize) -> String {
     let total = value.chars().count();
     if total <= max_chars {
@@ -728,6 +775,7 @@ fn truncate_text(value: &str, max_chars: usize) -> String {
 mod tests {
     use super::{Session, StreamEvent, SubagentProgressEvent, TranscriptItem, TranscriptKind};
 
+    /// Creates a session configured to accept streamed events for reducer-focused tests.
     fn streaming_session() -> Session {
         let mut session = Session::new(None);
         session.push_entry(super::TranscriptEntry::user("hello"));
@@ -735,6 +783,7 @@ mod tests {
         session
     }
 
+    /// Verifies that assistant text and tool entries remain in transcript order across interleaved events.
     #[test]
     fn interleaves_assistant_text_and_tool_entries() {
         let mut session = streaming_session();
@@ -763,6 +812,7 @@ mod tests {
         assert_eq!(third.body, "Second chunk.");
     }
 
+    /// Verifies that a tool call arriving before assistant text does not create an empty assistant entry.
     #[test]
     fn tool_before_text_does_not_create_empty_assistant_entry() {
         let mut session = streaming_session();
@@ -791,6 +841,7 @@ mod tests {
         );
     }
 
+    /// Verifies that tool completion updates the existing aggregated tool entry instead of appending a new one.
     #[test]
     fn updates_existing_tool_entry_when_tool_completes() {
         let mut session = streaming_session();
@@ -815,6 +866,7 @@ mod tests {
         assert_eq!(tool_entries[0].title, "Bash: ls");
     }
 
+    /// Verifies that consecutive tool calls of the same kind are collapsed into one transcript entry.
     #[test]
     fn aggregates_repeated_tool_calls_into_one_entry() {
         let mut session = streaming_session();
@@ -847,6 +899,7 @@ mod tests {
         assert_eq!(tool_entries[0].title, "File read x2 (latest: src/lib.rs)");
     }
 
+    /// Verifies that tool aggregation stops when a different tool kind interrupts the sequence.
     #[test]
     fn does_not_merge_non_consecutive_tool_calls() {
         let mut session = streaming_session();
@@ -886,6 +939,7 @@ mod tests {
         assert_eq!(tool_entries[2].title, "Bash: pwd (running)");
     }
 
+    /// Verifies that whitespace-only assistant deltas do not create visible transcript entries between tools.
     #[test]
     fn ignores_whitespace_only_assistant_chunks_between_tools() {
         let mut session = streaming_session();
@@ -915,6 +969,7 @@ mod tests {
         assert!(assistant_entries.is_empty());
     }
 
+    /// Verifies that child-agent progress is nested under a collapsible subagent group.
     #[test]
     fn nests_subagent_events_inside_collapsible_group() {
         let mut session = streaming_session();
@@ -951,6 +1006,7 @@ mod tests {
         assert_eq!(group.entries[1].title, "Tool: List files");
     }
 
+    /// Verifies that repeated child-agent tool events aggregate into one visible transcript entry.
     #[test]
     fn aggregates_subagent_tool_updates_into_one_entry() {
         let mut session = streaming_session();
@@ -991,6 +1047,7 @@ mod tests {
         assert_eq!(tool_entries[0].title, "Tools x2 (latest: Read Cargo.toml)");
     }
 
+    /// Verifies that whitespace-only child-agent assistant deltas are ignored.
     #[test]
     fn ignores_whitespace_only_subagent_chunks() {
         let mut session = streaming_session();
@@ -1020,6 +1077,7 @@ mod tests {
         assert!(assistant_entries.is_empty());
     }
 
+    /// Verifies that plain-text transcript serialization includes subagent group contents.
     #[test]
     fn transcript_text_serializes_subagent_group() {
         let mut session = streaming_session();
@@ -1042,6 +1100,7 @@ mod tests {
         assert!(text.contains("    Thinking..."));
     }
 
+    /// Verifies that full transcript serialization includes every top-level entry.
     #[test]
     fn full_transcript_text_includes_top_level_entries() {
         let mut session = streaming_session();
@@ -1056,6 +1115,7 @@ mod tests {
         assert!(text.contains("Done."));
     }
 
+    /// Verifies that clearing a session resets transcript and reducer state back to a single notice entry.
     #[test]
     fn clear_with_notice_resets_transcript_and_state() {
         let mut session = streaming_session();

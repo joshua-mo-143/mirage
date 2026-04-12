@@ -14,7 +14,7 @@ use mirage_core::{
     VeniceClient, VeniceConfig,
     agent::{MultiTurnStreamItem, Text},
     debug_stream::StreamDebugLogger,
-    session::{StreamEvent, summarize_tool_call},
+    session::{StreamEvent, TranscriptItem, TranscriptKind, summarize_tool_call},
     streaming::{StreamedAssistantContent, StreamedUserContent, StreamingPrompt},
     tools::{
         bash_tool::BashTool,
@@ -24,6 +24,7 @@ use mirage_core::{
         subagent_tool::SubagentTool,
     },
 };
+use serde::Deserialize;
 use mirage_service::{
     PromptRequest, ServiceConfig, SessionService,
     api::{
@@ -47,6 +48,7 @@ use tokio::{
 };
 use uuid::Uuid;
 
+/// Process-wide configuration loaded from environment variables at startup.
 #[derive(Debug, Clone)]
 struct ServerConfig {
     bind_addr: String,
@@ -57,6 +59,7 @@ struct ServerConfig {
 }
 
 impl ServerConfig {
+    /// Builds the server configuration from environment variables.
     fn from_env() -> Result<Self, ApiError> {
         let bind_addr =
             env::var("MIRAGE_SERVER_BIND").unwrap_or_else(|_| "0.0.0.0:3000".to_owned());
@@ -104,12 +107,14 @@ impl ServerConfig {
     }
 }
 
+/// Telegram-specific configuration for the example scheduled job flow.
 #[derive(Debug, Clone)]
 struct TelegramConfig {
     bot_token: Option<String>,
     default_chat_id: Option<String>,
 }
 
+/// Shared application state held by the Axum server.
 #[derive(Clone)]
 struct ServerState {
     admin_api_key: Arc<String>,
@@ -125,17 +130,20 @@ struct ServerState {
     shutdown_tx: Arc<Mutex<Option<oneshot::Sender<()>>>>,
 }
 
+/// Runtime state associated with a single in-memory session.
 struct SessionRuntime {
     service: Mutex<SessionService>,
     system_prompt: Option<String>,
     events_tx: broadcast::Sender<SessionSnapshot>,
 }
 
+/// In-memory scheduler state containing all registered jobs.
 #[derive(Default)]
 struct SchedulerState {
     jobs: Mutex<HashMap<String, ScheduledJob>>,
 }
 
+/// Persisted description of a scheduled in-memory job.
 #[derive(Debug, Clone)]
 struct ScheduledJob {
     id: String,
@@ -144,11 +152,13 @@ struct ScheduledJob {
     task: ScheduledTask,
 }
 
+/// Supported scheduled task variants handled by the in-process scheduler.
 #[derive(Debug, Clone)]
 enum ScheduledTask {
     TelegramHello { text: String, chat_id: String },
 }
 
+/// Internal HTTP error type converted into structured API responses.
 #[derive(Debug)]
 struct ApiError {
     status: StatusCode,
@@ -156,6 +166,7 @@ struct ApiError {
 }
 
 impl ApiError {
+    /// Creates a new API error with the provided status code and message.
     fn new(status: StatusCode, message: impl Into<String>) -> Self {
         Self {
             status,
@@ -165,6 +176,7 @@ impl ApiError {
 }
 
 impl fmt::Display for ApiError {
+    /// Formats the human-readable error message.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(&self.message)
     }
@@ -173,6 +185,7 @@ impl fmt::Display for ApiError {
 impl Error for ApiError {}
 
 impl IntoResponse for ApiError {
+    /// Converts an internal API error into an Axum JSON response.
     fn into_response(self) -> axum::response::Response {
         (
             self.status,
@@ -184,8 +197,10 @@ impl IntoResponse for ApiError {
     }
 }
 
+/// Convenience result alias used by JSON-returning API handlers.
 type ApiResult<T> = Result<Json<T>, ApiError>;
 
+/// Starts the Mirage Axum server and the in-process scheduler.
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
     let server_config = ServerConfig::from_env()?;
@@ -230,6 +245,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+/// Waits for either Ctrl+C or an authenticated shutdown request.
 async fn shutdown_signal(mut shutdown_rx: oneshot::Receiver<()>) {
     tokio::select! {
         _ = tokio::signal::ctrl_c() => {}
@@ -237,6 +253,7 @@ async fn shutdown_signal(mut shutdown_rx: oneshot::Receiver<()>) {
     }
 }
 
+/// Returns a simple authenticated health response.
 async fn health(
     State(state): State<Arc<ServerState>>,
     headers: HeaderMap,
@@ -247,6 +264,7 @@ async fn health(
     }))
 }
 
+/// Gracefully shuts the server down after an authenticated request.
 async fn shutdown(
     State(state): State<Arc<ServerState>>,
     headers: HeaderMap,
@@ -260,6 +278,7 @@ async fn shutdown(
     }))
 }
 
+/// Creates a new in-memory session and returns its initial snapshot.
 async fn create_session(
     State(state): State<Arc<ServerState>>,
     headers: HeaderMap,
@@ -293,6 +312,7 @@ async fn create_session(
     Ok(Json(snapshot))
 }
 
+/// Returns the current snapshot for an existing session.
 async fn get_session(
     State(state): State<Arc<ServerState>>,
     headers: HeaderMap,
@@ -303,6 +323,7 @@ async fn get_session(
     Ok(Json(runtime.snapshot(&id).await))
 }
 
+/// Submits a prompt to an existing session and starts streaming its execution.
 async fn submit_message(
     State(state): State<Arc<ServerState>>,
     headers: HeaderMap,
@@ -336,6 +357,7 @@ async fn submit_message(
     Ok(Json(runtime.snapshot(&id).await))
 }
 
+/// Streams session snapshots over Server-Sent Events for interactive clients.
 async fn stream_session_events(
     State(state): State<Arc<ServerState>>,
     headers: HeaderMap,
@@ -362,6 +384,7 @@ async fn stream_session_events(
     Ok(Sse::new(event_stream).keep_alive(KeepAlive::default()))
 }
 
+/// Registers a repeating Telegram hello job in the in-memory scheduler.
 async fn schedule_telegram_hello(
     State(state): State<Arc<ServerState>>,
     headers: HeaderMap,
@@ -423,6 +446,7 @@ async fn schedule_telegram_hello(
     }))
 }
 
+/// Runs a parent-agent prompt to completion and broadcasts updated snapshots as events arrive.
 async fn run_prompt(
     state: Arc<ServerState>,
     runtime: Arc<SessionRuntime>,
@@ -519,6 +543,7 @@ async fn run_prompt(
     }
 }
 
+/// Builds a Venice agent configured with the local tool runtime used by the server.
 fn build_agent(
     venice_client: &VeniceClient,
     cursor_sessions: Arc<CursorSessionStore>,
@@ -561,6 +586,7 @@ fn build_agent(
         .build()
 }
 
+/// Runs the in-process scheduler loop and executes due jobs.
 async fn run_scheduler(state: Arc<ServerState>) {
     let mut interval = time::interval(Duration::from_secs(1));
 
@@ -588,6 +614,7 @@ async fn run_scheduler(state: Arc<ServerState>) {
     }
 }
 
+/// Executes a single scheduled job.
 async fn execute_job(state: &ServerState, job: &ScheduledJob) -> Result<(), ApiError> {
     match &job.task {
         ScheduledTask::TelegramHello { text, chat_id } => {
@@ -596,6 +623,7 @@ async fn execute_job(state: &ServerState, job: &ScheduledJob) -> Result<(), ApiE
     }
 }
 
+/// Sends a Telegram message using the configured bot token.
 async fn send_telegram_message(
     state: &ServerState,
     chat_id: &str,
@@ -634,6 +662,7 @@ async fn send_telegram_message(
     Ok(())
 }
 
+/// Looks up a session runtime by id or returns a not-found error.
 async fn get_session_runtime(
     state: &ServerState,
     id: &str,
@@ -648,12 +677,14 @@ async fn get_session_runtime(
 }
 
 impl SessionRuntime {
+    /// Computes the current serialized snapshot for this runtime.
     async fn snapshot(&self, id: &str) -> SessionSnapshot {
         let service = self.service.lock().await;
         snapshot_from_service(id, &service)
     }
 }
 
+/// Converts a service instance into the wire-format session snapshot returned by the API.
 fn snapshot_from_service(id: &str, service: &SessionService) -> SessionSnapshot {
     let status = service.status_snapshot();
     let session = service.session();
@@ -673,10 +704,12 @@ fn snapshot_from_service(id: &str, service: &SessionService) -> SessionSnapshot 
     }
 }
 
+/// Serializes a session snapshot for SSE delivery.
 fn serialize_snapshot(snapshot: &SessionSnapshot) -> String {
     serde_json::to_string(snapshot).unwrap_or_else(|_| "{\"error\":\"snapshot\"}".to_owned())
 }
 
+/// Verifies that the request carries valid admin credentials.
 fn require_admin(state: &ServerState, headers: &HeaderMap) -> Result<(), ApiError> {
     let authorized = headers
         .get(axum::http::header::AUTHORIZATION)
@@ -700,6 +733,7 @@ fn require_admin(state: &ServerState, headers: &HeaderMap) -> Result<(), ApiErro
     }
 }
 
+/// Parses a boolean environment variable value.
 fn parse_env_bool(value: &str) -> Result<bool, ApiError> {
     match value.trim().to_ascii_lowercase().as_str() {
         "1" | "true" | "yes" | "on" => Ok(true),
@@ -711,6 +745,7 @@ fn parse_env_bool(value: &str) -> Result<bool, ApiError> {
     }
 }
 
+/// Parses an unsigned integer environment variable value into a `usize`.
 fn parse_env_usize(value: &str) -> Result<usize, ApiError> {
     value.trim().parse::<usize>().map_err(|_| {
         ApiError::new(

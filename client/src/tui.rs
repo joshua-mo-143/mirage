@@ -18,12 +18,14 @@ use crate::{
     transcript::{build_transcript_lines, wrapped_line_count},
 };
 
+/// Owns terminal setup, rendering, and cleanup for the Mirage TUI.
 pub(crate) struct Tui {
     terminal: Terminal<CrosstermBackend<Stdout>>,
     mouse_capture_enabled: bool,
 }
 
 impl Tui {
+    /// Enters the alternate screen, enables raw mode, and constructs the TUI wrapper.
     pub(crate) fn new() -> io::Result<Self> {
         enable_raw_mode()?;
         let mut stdout = io::stdout();
@@ -35,12 +37,14 @@ impl Tui {
         })
     }
 
+    /// Renders one application frame and updates mouse-capture state.
     pub(crate) fn draw(&mut self, app: &mut App) -> io::Result<()> {
         self.set_mouse_capture(!app.selection_mode)?;
         self.terminal.draw(|frame| render(frame, app))?;
         Ok(())
     }
 
+    /// Enables or disables terminal mouse capture to support native text selection mode.
     fn set_mouse_capture(&mut self, enabled: bool) -> io::Result<()> {
         if self.mouse_capture_enabled == enabled {
             return Ok(());
@@ -58,6 +62,7 @@ impl Tui {
 }
 
 impl Drop for Tui {
+    /// Restores terminal state when the TUI is dropped.
     fn drop(&mut self) {
         let _ = disable_raw_mode();
         let _ = execute!(
@@ -69,6 +74,7 @@ impl Drop for Tui {
     }
 }
 
+/// Renders the entire Mirage terminal UI for the current application state.
 fn render(frame: &mut Frame, app: &mut App) {
     let area = centered_content_area(frame.area());
     let [
@@ -231,6 +237,7 @@ fn render(frame: &mut Frame, app: &mut App) {
     }
 }
 
+/// Narrows the terminal frame to a centered content column for a chat-like layout.
 fn centered_content_area(area: Rect) -> Rect {
     let horizontal_margin = if area.width > 112 {
         (area.width - 104) / 2

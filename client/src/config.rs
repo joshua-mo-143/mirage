@@ -6,17 +6,20 @@ use std::{
 };
 use thiserror::Error;
 
+/// Persisted client configuration stored on the local machine.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub(crate) struct ClientConfig {
     pub(crate) remote: Option<RemoteServerConfig>,
 }
 
+/// Saved remote server connection details used as client defaults.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub(crate) struct RemoteServerConfig {
     pub(crate) server_url: String,
     pub(crate) admin_api_key: String,
 }
 
+/// Errors that can occur while loading or saving the client configuration file.
 #[derive(Debug, Error)]
 pub(crate) enum ConfigError {
     #[error("unable to determine Mirage config directory")]
@@ -28,6 +31,7 @@ pub(crate) enum ConfigError {
 }
 
 impl ClientConfig {
+    /// Loads the client configuration from disk or returns a default config if none exists.
     pub(crate) fn load_or_default() -> Result<Self, ConfigError> {
         let path = config_path()?;
         match fs::read_to_string(path) {
@@ -37,6 +41,7 @@ impl ClientConfig {
         }
     }
 
+    /// Persists the client configuration to disk and returns the path that was written.
     pub(crate) fn save(&self) -> Result<PathBuf, ConfigError> {
         let path = config_path()?;
         if let Some(parent) = path.parent() {
@@ -47,6 +52,7 @@ impl ClientConfig {
     }
 }
 
+/// Prompts the user to persist a remote server configuration as the default connection target.
 pub(crate) fn maybe_prompt_to_save_remote(
     config: &mut ClientConfig,
     remote: &RemoteServerConfig,
@@ -74,6 +80,7 @@ pub(crate) fn maybe_prompt_to_save_remote(
     Ok(Some(config.save()?))
 }
 
+/// Returns the on-disk configuration path used by the Mirage client.
 fn config_path() -> Result<PathBuf, ConfigError> {
     let base = if let Some(path) = env::var_os("XDG_CONFIG_HOME") {
         PathBuf::from(path)
@@ -90,6 +97,7 @@ fn config_path() -> Result<PathBuf, ConfigError> {
 mod tests {
     use super::RemoteServerConfig;
 
+    /// Verifies that remote server configs compare using both the URL and admin key.
     #[test]
     fn remote_server_config_equality_matches_url_and_key() {
         let left = RemoteServerConfig {

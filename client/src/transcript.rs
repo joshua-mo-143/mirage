@@ -6,11 +6,13 @@ use ratatui::{
     text::{Line, Span},
 };
 
+/// Rendered transcript lines plus the visual line index of the selected top-level item.
 pub(crate) struct RenderedTranscript {
     pub(crate) lines: Vec<Line<'static>>,
     pub(crate) selected_line_index: Option<usize>,
 }
 
+/// Converts transcript items into styled `ratatui` lines for display.
 pub(crate) fn build_transcript_lines(
     entries: &[TranscriptItem],
     selected_index: Option<usize>,
@@ -51,6 +53,7 @@ pub(crate) fn build_transcript_lines(
     }
 }
 
+/// Counts the number of visual rows needed to render the provided lines at a given width.
 pub(crate) fn wrapped_line_count(lines: &[Line<'_>], width: u16) -> u16 {
     if width == 0 {
         return 0;
@@ -70,6 +73,7 @@ pub(crate) fn wrapped_line_count(lines: &[Line<'_>], width: u16) -> u16 {
         .sum()
 }
 
+/// Formats the visible title for a subagent group row in the transcript.
 pub(crate) fn subagent_group_title(group: &SubagentGroup) -> String {
     let marker = if group.expanded { "[-]" } else { "[+]" };
     let status = match group.status {
@@ -84,6 +88,7 @@ pub(crate) fn subagent_group_title(group: &SubagentGroup) -> String {
     )
 }
 
+/// Pushes the styled title and body lines for a single transcript entry.
 fn push_entry_lines(
     lines: &mut Vec<Line<'static>>,
     entry: &TranscriptEntry,
@@ -119,6 +124,7 @@ fn push_entry_lines(
     }
 }
 
+/// Returns the title styling used for a transcript entry kind.
 fn entry_title_style(kind: TranscriptKind) -> Style {
     match kind {
         TranscriptKind::Meta => Style::default()
@@ -137,6 +143,7 @@ fn entry_title_style(kind: TranscriptKind) -> Style {
     }
 }
 
+/// Returns the body styling used for a transcript entry kind.
 fn entry_body_style(kind: TranscriptKind) -> Style {
     match kind {
         TranscriptKind::Meta => Style::default().fg(Color::Gray),
@@ -145,6 +152,7 @@ fn entry_body_style(kind: TranscriptKind) -> Style {
     }
 }
 
+/// Applies selection highlighting to an existing style when needed.
 fn selectable_style(style: Style, selected: bool) -> Style {
     if selected {
         style.fg(Color::Black).bg(Color::White)
@@ -153,6 +161,7 @@ fn selectable_style(style: Style, selected: bool) -> Style {
     }
 }
 
+/// Returns the style used for a subagent group header based on its status.
 fn subagent_group_style(group: &SubagentGroup) -> Style {
     match group.status {
         SubagentStatus::Running => Style::default()

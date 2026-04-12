@@ -4,6 +4,7 @@ use crate::backend::ClientBackend;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
 
 impl App {
+    /// Handles a keyboard event according to the current focus and selection mode.
     pub(crate) fn handle_key(&mut self, key: KeyEvent, backend: &mut ClientBackend) {
         if matches!(key.code, KeyCode::Char('g')) && key.modifiers.contains(KeyModifiers::CONTROL) {
             self.toggle_selection_mode();
@@ -110,6 +111,7 @@ impl App {
         }
     }
 
+    /// Handles transcript-related mouse input such as wheel scrolling.
     pub(crate) fn handle_mouse(&mut self, mouse: MouseEvent) {
         if !rect_contains_point(self.last_transcript_area, mouse.column, mouse.row) {
             return;

@@ -10,6 +10,7 @@ use std::{
 };
 use thiserror::Error;
 
+/// Writes raw streamed assistant and tool events to a JSONL file for later inspection.
 #[derive(Clone)]
 pub struct StreamDebugLogger {
     path: Arc<PathBuf>,
@@ -17,6 +18,7 @@ pub struct StreamDebugLogger {
 }
 
 impl StreamDebugLogger {
+    /// Builds a logger from an environment variable if one is configured.
     pub fn from_env(var_name: &str) -> Result<Option<Self>, StreamDebugLoggerError> {
         match env::var(var_name) {
             Ok(value) => match parse_logger_path(&value)? {
@@ -28,6 +30,7 @@ impl StreamDebugLogger {
         }
     }
 
+    /// Resolves a logger from an explicit path, then an environment variable, then a debug-build default path.
     pub fn from_optional_path_or_env(
         var_name: &str,
         explicit_path: Option<&str>,
@@ -50,6 +53,7 @@ impl StreamDebugLogger {
         Ok(None)
     }
 
+    /// Opens or creates a JSONL log file at the provided path.
     pub fn new(path: impl Into<PathBuf>) -> Result<Self, StreamDebugLoggerError> {
         let path = path.into();
         if path.as_os_str().is_empty() {
@@ -68,10 +72,12 @@ impl StreamDebugLogger {
         })
     }
 
+    /// Returns the filesystem path backing this logger.
     pub fn path(&self) -> &Path {
         &self.path
     }
 
+    /// Appends a single streamed event record to the JSONL log.
     pub fn log_stream_event(
         &self,
         source: &str,
@@ -96,6 +102,7 @@ impl StreamDebugLogger {
     }
 }
 
+/// Describes failures that can occur while configuring or writing a stream debug log.
 #[derive(Debug, Error)]
 pub enum StreamDebugLoggerError {
     #[error("invalid stream debug log path")]
@@ -110,6 +117,7 @@ pub enum StreamDebugLoggerError {
     LockPoisoned,
 }
 
+/// Captures one serialized stream event record as it is written to disk.
 #[derive(Serialize)]
 struct StreamDebugRecord {
     timestamp_ms: u128,
@@ -120,6 +128,7 @@ struct StreamDebugRecord {
     event: DebugStreamEvent,
 }
 
+/// Encodes the event-specific payload stored in a debug stream log record.
 #[derive(Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 enum DebugStreamEvent {
@@ -146,6 +155,7 @@ enum DebugStreamEvent {
 }
 
 impl DebugStreamEvent {
+    /// Converts a runtime stream event into its serialized debug representation.
     fn from_stream_event(event: &StreamEvent) -> Self {
         match event {
             StreamEvent::AssistantText(text) => Self::AssistantText { text: text.clone() },
@@ -171,6 +181,7 @@ impl DebugStreamEvent {
     }
 }
 
+/// Returns the current wall-clock timestamp in milliseconds since the Unix epoch.
 fn now_millis() -> u128 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -178,6 +189,7 @@ fn now_millis() -> u128 {
         .as_millis()
 }
 
+/// Normalizes a user-provided logger path and handles explicit opt-out sentinel values.
 fn parse_logger_path(value: &str) -> Result<Option<PathBuf>, StreamDebugLoggerError> {
     let normalized = value.trim();
     if normalized.is_empty() {
@@ -195,6 +207,7 @@ fn parse_logger_path(value: &str) -> Result<Option<PathBuf>, StreamDebugLoggerEr
     Ok(Some(PathBuf::from(normalized)))
 }
 
+/// Computes the default debug log location used in non-release builds.
 fn default_debug_log_path() -> Result<PathBuf, StreamDebugLoggerError> {
     let base = if let Some(path) = env::var_os("XDG_STATE_HOME") {
         PathBuf::from(path)

@@ -3,6 +3,7 @@ use crate::backend::ClientBackend;
 use mirage_core::session::TranscriptEntry;
 
 impl App {
+    /// Handles Enter based on the current focus, either toggling transcript state or submitting input.
     pub(crate) fn process_enter(&mut self, backend: &mut ClientBackend) {
         if matches!(self.focus, FocusArea::Transcript) {
             self.toggle_selected_subagent_group();
@@ -24,11 +25,13 @@ impl App {
         }
     }
 
+    /// Submits a normal user prompt through the active backend.
     fn submit_prompt(&mut self, backend: &mut ClientBackend, prompt: String) {
         backend.submit_prompt(&mut self.service, prompt);
         self.follow_transcript_tail_if_composing();
     }
 
+    /// Executes a slash command entered into the composer.
     fn handle_command(&mut self, backend: &mut ClientBackend, command: &str) {
         match command {
             "/help" => {

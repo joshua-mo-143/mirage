@@ -11,6 +11,7 @@ use mirage_core::{
 use ratatui::layout::Rect;
 use std::sync::Arc;
 
+/// Builds deterministic client arguments for UI-focused unit tests.
 fn test_args() -> Args {
     Args {
         prompt: None,
@@ -32,6 +33,7 @@ fn test_args() -> Args {
     }
 }
 
+/// Creates an app with a minimal transcript and streaming state for UI tests.
 fn app_with_transcript() -> App {
     let mut app = App::new(&test_args(), Arc::new(CursorSessionStore::default()));
     app.service
@@ -41,6 +43,7 @@ fn app_with_transcript() -> App {
     app
 }
 
+/// Verifies wrapped transcript lines are counted by visual rows rather than logical lines only.
 #[test]
 fn wrapped_line_count_accounts_for_wrapped_visual_rows() {
     let lines = vec![
@@ -52,6 +55,7 @@ fn wrapped_line_count_accounts_for_wrapped_visual_rows() {
     assert_eq!(wrapped_line_count(&lines, 5), 4);
 }
 
+/// Verifies collapsed subagent groups hide child entries until expanded.
 #[test]
 fn collapsed_subagent_groups_hide_child_entries_in_rendered_transcript() {
     let mut app = app_with_transcript();
@@ -100,6 +104,7 @@ fn collapsed_subagent_groups_hide_child_entries_in_rendered_transcript() {
     assert!(expanded_text.contains("Thinking..."));
 }
 
+/// Verifies the selected transcript item can serialize a subagent group to plain text.
 #[test]
 fn selected_transcript_text_serializes_subagent_group() {
     let mut app = app_with_transcript();
@@ -125,6 +130,7 @@ fn selected_transcript_text_serializes_subagent_group() {
     assert!(text.contains("    Thinking..."));
 }
 
+/// Verifies full transcript serialization includes every top-level entry.
 #[test]
 fn full_transcript_text_includes_top_level_entries() {
     let mut app = app_with_transcript();
@@ -139,6 +145,7 @@ fn full_transcript_text_includes_top_level_entries() {
     assert!(text.contains("Done."));
 }
 
+/// Verifies page-up switches the transcript into manual scroll mode from tail-follow mode.
 #[test]
 fn page_up_enters_manual_scroll_from_tail() {
     let mut app = app_with_transcript();
@@ -156,6 +163,7 @@ fn page_up_enters_manual_scroll_from_tail() {
     assert_eq!(app.transcript_scroll, 101);
 }
 
+/// Verifies page-down clamps manual transcript scrolling to the known maximum.
 #[test]
 fn page_down_clamps_manual_scroll_to_max() {
     let mut app = app_with_transcript();
@@ -170,6 +178,7 @@ fn page_down_clamps_manual_scroll_to_max() {
     assert_eq!(app.transcript_scroll, 80);
 }
 
+/// Verifies mouse-wheel scrolling affects the transcript when the cursor is inside its viewport.
 #[test]
 fn mouse_wheel_scrolls_transcript_inside_transcript_area() {
     let mut app = app_with_transcript();
@@ -189,6 +198,7 @@ fn mouse_wheel_scrolls_transcript_inside_transcript_area() {
     assert_eq!(app.transcript_scroll, 17);
 }
 
+/// Verifies mouse-wheel events outside the transcript viewport are ignored.
 #[test]
 fn mouse_wheel_ignores_events_outside_transcript_area() {
     let mut app = app_with_transcript();
@@ -208,6 +218,7 @@ fn mouse_wheel_ignores_events_outside_transcript_area() {
     assert_eq!(app.transcript_scroll, 20);
 }
 
+/// Verifies the selection mode helpers toggle the expected UI state.
 #[test]
 fn selection_mode_methods_toggle_state() {
     let mut app = app_with_transcript();
@@ -218,6 +229,7 @@ fn selection_mode_methods_toggle_state() {
     assert!(app.service.session().status.contains("Ctrl+G"));
 }
 
+/// Verifies leaving selection mode does not also request application shutdown.
 #[test]
 fn selection_mode_methods_exit_without_quitting() {
     let mut app = app_with_transcript();

@@ -10,6 +10,7 @@ use mirage_core::{
 };
 use tokio::sync::mpsc;
 
+/// Streams agent output into backend events for the local client runtime.
 pub(crate) async fn stream_agent_response(
     agent: VeniceAgent,
     prompt: String,
