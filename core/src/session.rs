@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
 
-const DEFAULT_WELCOME_BODY: &str = "Type a message below. Use /help for commands. Built-in tools: `bash`, `playwright`, `prompt_cursor`, `subagent`, `read_file`, `edit_file`, `write_file` (whole-file writes only).";
+const DEFAULT_WELCOME_BODY: &str = "How can I help you today?";
 
 /// Categorizes transcript entries for rendering and serialization.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

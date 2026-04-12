@@ -4,6 +4,7 @@ use mirage_core::{
     VeniceAgent, VeniceClient, VeniceConfig,
     debug_stream::StreamDebugLogger,
     session::{StreamEvent, SubagentProgressEvent},
+    skills::ResolvedSkill,
     tools::{
         bash_tool::BashTool,
         cursor_session::CursorSessionStore,
@@ -60,10 +61,15 @@ impl ClientBackend {
     }
 
     /// Submits a prompt through whichever backend is currently active.
-    pub(crate) fn submit_prompt(&mut self, service: &mut SessionService, prompt: String) {
+    pub(crate) fn submit_prompt(
+        &mut self,
+        service: &mut SessionService,
+        prompt: String,
+        resolved_skills: Vec<ResolvedSkill>,
+    ) {
         match self {
-            Self::Local(backend) => backend.submit_prompt(service, prompt),
-            Self::Remote(backend) => backend.submit_prompt(service, prompt),
+            Self::Local(backend) => backend.submit_prompt(service, prompt, resolved_skills),
+            Self::Remote(backend) => backend.submit_prompt(service, prompt, resolved_skills),
         }
     }
 
@@ -295,15 +301,20 @@ impl LocalBackend {
     }
 
     /// Starts a local prompt run and forwards streamed events back into the UI loop.
-    fn submit_prompt(&mut self, service: &mut SessionService, prompt: String) {
-        let request = service.submit_prompt(prompt);
+    fn submit_prompt(
+        &mut self,
+        service: &mut SessionService,
+        prompt: String,
+        resolved_skills: Vec<ResolvedSkill>,
+    ) {
+        let request = service.submit_prompt(prompt, resolved_skills);
         let agent = self.agent.clone();
         let debug_logger = self.debug_logger.clone();
         let tx = self.tx.clone();
         tokio::spawn(async move {
             stream_agent_response(
                 agent,
-                request.prompt,
+                request.effective_prompt,
                 request.history,
                 request.max_turns,
                 tx,
@@ -368,7 +379,12 @@ impl RemoteBackend {
     }
 
     /// Submits a prompt to the currently selected remote session.
-    fn submit_prompt(&self, service: &mut SessionService, prompt: String) {
+    fn submit_prompt(
+        &self,
+        service: &mut SessionService,
+        prompt: String,
+        resolved_skills: Vec<ResolvedSkill>,
+    ) {
         service.session_mut().streaming = true;
         service.session_mut().status = "Submitting remote request...".to_owned();
 
@@ -390,6 +406,7 @@ impl RemoteBackend {
                 &admin_api_key,
                 &session_id,
                 prompt,
+                resolved_skills,
             )
             .await
             {
@@ -507,6 +524,7 @@ async fn submit_remote_message(
     admin_api_key: &str,
     session_id: &str,
     prompt: String,
+    resolved_skills: Vec<ResolvedSkill>,
 ) -> Result<SessionSnapshot, String> {
     let response = http_client
         .post(api_url(
@@ -514,7 +532,10 @@ async fn submit_remote_message(
             &format!("/sessions/{session_id}/messages"),
         ))
         .bearer_auth(admin_api_key)
-        .json(&SubmitMessageRequest { prompt })
+        .json(&SubmitMessageRequest {
+            prompt,
+            resolved_skills,
+        })
         .send()
         .await
         .map_err(|error| format!("failed to submit remote prompt: {error}"))?;

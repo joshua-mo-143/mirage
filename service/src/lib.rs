@@ -4,6 +4,7 @@ use crate::api::SessionSnapshot;
 use mirage_core::{
     message::Message,
     session::{Session, StreamEvent, SubagentProgressEvent},
+    skills::{ResolvedSkill, prompt_with_resolved_skills},
 };
 
 /// Static configuration shared by a session service instance.
@@ -21,6 +22,8 @@ pub struct ServiceConfig {
 #[derive(Debug, Clone)]
 pub struct PromptRequest {
     pub prompt: String,
+    pub effective_prompt: String,
+    pub resolved_skills: Vec<ResolvedSkill>,
     pub history: Vec<Message>,
     pub max_turns: usize,
 }
@@ -81,13 +84,20 @@ impl SessionService {
     }
 
     /// Begins a new prompt submission and returns the payload needed to execute it.
-    pub fn submit_prompt(&mut self, prompt: String) -> PromptRequest {
+    pub fn submit_prompt(
+        &mut self,
+        prompt: String,
+        resolved_skills: Vec<ResolvedSkill>,
+    ) -> PromptRequest {
         self.history_messages_override = None;
         let history = self.session.history.clone();
         let max_turns = self.config.max_turns;
         self.session.begin_prompt(prompt.clone());
+        let effective_prompt = prompt_with_resolved_skills(&prompt, &resolved_skills);
         PromptRequest {
             prompt,
+            effective_prompt,
+            resolved_skills,
             history,
             max_turns,
         }
@@ -167,9 +177,10 @@ mod tests {
     fn submit_prompt_returns_request_and_updates_session() {
         let mut service = SessionService::new(config(), None);
 
-        let request = service.submit_prompt("hello".to_owned());
+        let request = service.submit_prompt("hello".to_owned(), Vec::new());
 
         assert_eq!(request.prompt, "hello");
+        assert_eq!(request.effective_prompt, "hello");
         assert_eq!(request.max_turns, 8);
         assert!(request.history.is_empty());
         assert!(service.session().streaming);
@@ -190,7 +201,7 @@ mod tests {
     #[test]
     fn status_snapshot_reflects_configuration_and_history_count() {
         let mut service = SessionService::new(config(), None);
-        service.submit_prompt("hello".to_owned());
+        service.submit_prompt("hello".to_owned(), Vec::new());
 
         let snapshot = service.status_snapshot();
 

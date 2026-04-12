@@ -2,6 +2,7 @@ mod app;
 mod args;
 mod backend;
 mod config;
+mod skills;
 mod streaming;
 mod transcript;
 mod tui;

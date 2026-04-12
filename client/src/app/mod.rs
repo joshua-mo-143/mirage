@@ -2,7 +2,7 @@ use mirage_service::SessionService;
 use ratatui::layout::Rect;
 use std::sync::Arc;
 
-use mirage_core::tools::cursor_session::CursorSessionStore;
+use mirage_core::{skills::ResolvedSkill, tools::cursor_session::CursorSessionStore};
 
 mod commands;
 mod events;
@@ -45,4 +45,5 @@ pub(crate) struct App {
     pub(crate) last_transcript_page_height: u16,
     pub(crate) last_transcript_area: Rect,
     cursor_sessions: Arc<CursorSessionStore>,
+    active_skill: Option<ResolvedSkill>,
 }

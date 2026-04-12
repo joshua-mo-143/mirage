@@ -60,6 +60,7 @@ impl App {
             last_transcript_page_height: 0,
             last_transcript_area: ratatui::layout::Rect::default(),
             cursor_sessions,
+            active_skill: None,
         }
     }
 
@@ -72,6 +73,11 @@ impl App {
     pub(super) fn push_session_entry(&mut self, entry: TranscriptEntry) {
         self.service.session_mut().push_entry(entry);
         self.follow_transcript_tail_if_composing();
+    }
+
+    /// Returns the name of the currently active explicitly selected skill, if any.
+    pub(super) fn active_skill_name(&self) -> Option<&str> {
+        self.active_skill.as_ref().map(|skill| skill.name.as_str())
     }
 
     /// Keeps the transcript selection pinned to the tail while the composer owns focus.

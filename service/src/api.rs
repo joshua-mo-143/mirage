@@ -1,4 +1,4 @@
-use mirage_core::session::TranscriptItem;
+use mirage_core::{session::TranscriptItem, skills::ResolvedSkill};
 use serde::{Deserialize, Serialize};
 
 /// Request body used to create a new server-side session.
@@ -11,6 +11,8 @@ pub struct CreateSessionRequest {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SubmitMessageRequest {
     pub prompt: String,
+    #[serde(default)]
+    pub resolved_skills: Vec<ResolvedSkill>,
 }
 
 /// Serialized snapshot of a session exposed over the Mirage service API.

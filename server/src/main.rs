@@ -15,6 +15,7 @@ use mirage_core::{
     agent::{MultiTurnStreamItem, Text},
     debug_stream::StreamDebugLogger,
     session::{StreamEvent, TranscriptItem, TranscriptKind, summarize_tool_call},
+    skills::ResolvedSkill,
     streaming::{StreamedAssistantContent, StreamedUserContent, StreamingPrompt},
     tools::{
         bash_tool::BashTool,
@@ -370,7 +371,8 @@ async fn submit_message(
 ) -> ApiResult<SessionSnapshot> {
     require_admin(&state, &headers)?;
     let runtime = get_session_runtime(&state, &id).await?;
-    let prompt_request = begin_prompt(&runtime, &id, request.prompt).await?;
+    let prompt_request =
+        begin_prompt(&runtime, &id, request.prompt, request.resolved_skills).await?;
 
     tokio::spawn(run_prompt(
         state.clone(),
@@ -538,7 +540,7 @@ async fn handle_telegram_prompt(
 ) -> Result<(), ApiError> {
     send_telegram_chat_action(&state, chat_id, "typing").await?;
     let (session_id, runtime) = get_or_create_telegram_session(&state, chat_id).await?;
-    let prompt_request = match begin_prompt(&runtime, &session_id, prompt).await {
+    let prompt_request = match begin_prompt(&runtime, &session_id, prompt, Vec::new()).await {
         Ok(request) => request,
         Err(error) if error.status == StatusCode::CONFLICT => {
             send_telegram_text(
@@ -693,7 +695,7 @@ async fn run_prompt(
         subagent_tx,
     );
     let mut stream = agent
-        .stream_prompt(request.prompt)
+        .stream_prompt(request.effective_prompt)
         .with_history(request.history)
         .multi_turn(request.max_turns)
         .await;
@@ -755,6 +757,7 @@ async fn begin_prompt(
     runtime: &SessionRuntime,
     session_id: &str,
     prompt: String,
+    resolved_skills: Vec<ResolvedSkill>,
 ) -> Result<PromptRequest, ApiError> {
     let mut service = runtime.service.lock().await;
     if !service.can_submit(&prompt) {
@@ -763,7 +766,7 @@ async fn begin_prompt(
             "session is already streaming or the prompt was empty",
         ));
     }
-    let prompt_request = service.submit_prompt(prompt);
+    let prompt_request = service.submit_prompt(prompt, resolved_skills);
     let snapshot = snapshot_from_service(session_id, &service);
     let _ = runtime.events_tx.send(snapshot);
     Ok(prompt_request)
