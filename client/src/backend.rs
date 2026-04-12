@@ -8,6 +8,7 @@ use mirage_core::{
         bash_tool::BashTool,
         cursor_session::CursorSessionStore,
         file_tools::{EditFileTool, ReadFileTool, WriteFileTool},
+        playwright_tool::PlaywrightTool,
         prompt_cursor_tool::PromptCursorTool,
         subagent_tool::SubagentTool,
     },
@@ -252,6 +253,7 @@ impl LocalBackend {
             "Tool usage guidance:
 - Prefer discovering capabilities by using `bash` instead of assuming what commands, binaries, files, or directories are available.
 - Use `bash` freely for arbitrary shell commands, environment inspection, and capability discovery.
+- Use `playwright` for headless browser automation when a task needs webpage interaction, form filling, visible text extraction, or screenshots.
 - Use `subagent` when you want to delegate a deeper investigation or planning task to a child Cursor agent and incorporate its final answer.
 - Use `read_file` to inspect files before editing them when needed.
 - Prefer `edit_file` for modifying part of an existing file.
@@ -277,6 +279,7 @@ impl LocalBackend {
 
         let agent = agent_builder
             .tool(BashTool)
+            .tool(PlaywrightTool::new())
             .tool(PromptCursorTool::new(cursor_sessions.clone()))
             .tool(SubagentTool::new(subagent_tx, cursor_sessions.clone()))
             .tool(ReadFileTool)

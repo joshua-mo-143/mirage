@@ -9,9 +9,20 @@ mod tui;
 use clap::Parser;
 use crossterm::event::{Event, EventStream};
 use futures::StreamExt;
-use mirage_core::tools::cursor_session::CursorSessionStore;
-use std::{error::Error, sync::Arc};
-use tokio::sync::mpsc;
+use mirage_core::tools::{
+    cursor_session::CursorSessionStore,
+    playwright_tool::{
+        PlaywrightRuntimeStatus, bundled_playwright_driver_dir, managed_playwright_driver_dir,
+        playwright_browsers_dir, playwright_runtime_status,
+    },
+};
+use reqwest::Url;
+use std::{
+    error::Error,
+    io::{self, IsTerminal, Write},
+    sync::Arc,
+};
+use tokio::{process::Command, sync::mpsc};
 use uuid::Uuid;
 
 use crate::{
@@ -94,6 +105,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
     };
 
     let remote = resolve_remote_config(&args, &client_config, launched_remote)?;
+    if should_preflight_local_playwright(remote.as_ref()) {
+        maybe_prepare_local_playwright_runtime().await?;
+    }
     let cursor_sessions = Arc::new(CursorSessionStore::default());
     let (tx, mut rx) = mpsc::unbounded_channel();
     let (service, mut backend) =
@@ -200,5 +214,126 @@ fn remote_config_for_start(args: &Args, client_config: &ClientConfig) -> RemoteS
     RemoteServerConfig {
         server_url,
         admin_api_key,
+    }
+}
+
+/// Returns whether the current execution target will use a local Mirage runtime for browser automation.
+fn should_preflight_local_playwright(remote: Option<&RemoteServerConfig>) -> bool {
+    remote.is_none() || remote.is_some_and(is_local_remote_config)
+}
+
+/// Returns whether a configured remote actually points at a local Mirage server.
+fn is_local_remote_config(remote: &RemoteServerConfig) -> bool {
+    Url::parse(&remote.server_url)
+        .ok()
+        .and_then(|url| url.host_str().map(str::to_owned))
+        .is_some_and(|host| matches!(host.as_str(), "127.0.0.1" | "localhost" | "::1"))
+}
+
+/// Prompts for and performs the local Playwright install flow when the managed runtime is missing.
+async fn maybe_prepare_local_playwright_runtime() -> Result<(), Box<dyn Error>> {
+    match playwright_runtime_status().await {
+        PlaywrightRuntimeStatus::Ready => Ok(()),
+        PlaywrightRuntimeStatus::MissingPackage | PlaywrightRuntimeStatus::MissingBrowser => {
+            if !io::stdin().is_terminal() || !io::stdout().is_terminal() {
+                eprintln!(
+                    "Playwright browser automation is not installed and Mirage cannot prompt in this terminal. Browser automation will remain unavailable."
+                );
+                return Ok(());
+            }
+
+            print!(
+                "Mirage browser automation needs to install Playwright Chromium and supporting Node packages into its managed local runtime. Continue? [Y/n]: "
+            );
+            io::stdout().flush()?;
+            let mut answer = String::new();
+            io::stdin().read_line(&mut answer)?;
+            let normalized = answer.trim().to_ascii_lowercase();
+            if !normalized.is_empty() && normalized != "y" && normalized != "yes" {
+                println!("Skipping Playwright install. Browser automation will be unavailable.");
+                return Ok(());
+            }
+
+            install_local_playwright_runtime().await?;
+            match playwright_runtime_status().await {
+                PlaywrightRuntimeStatus::Ready => {
+                    println!("Playwright browser automation is ready.");
+                    Ok(())
+                }
+                status => Err(format!(
+                    "Playwright install completed but Mirage still cannot use the runtime: {}",
+                    describe_playwright_runtime_status(&status)
+                )
+                .into()),
+            }
+        }
+        status => {
+            eprintln!(
+                "Playwright browser automation is unavailable: {}",
+                describe_playwright_runtime_status(&status)
+            );
+            Ok(())
+        }
+    }
+}
+
+/// Installs the managed local Playwright runtime used by Mirage.
+async fn install_local_playwright_runtime() -> Result<(), Box<dyn Error>> {
+    let bundled_dir = bundled_playwright_driver_dir();
+    let package_dir = managed_playwright_driver_dir()?;
+    let browsers_dir = playwright_browsers_dir()?;
+    std::fs::create_dir_all(&package_dir)?;
+    std::fs::create_dir_all(&browsers_dir)?;
+    std::fs::copy(
+        bundled_dir.join("package.json"),
+        package_dir.join("package.json"),
+    )?;
+    std::fs::copy(bundled_dir.join("index.js"), package_dir.join("index.js"))?;
+
+    let npm_status = Command::new("npm")
+        .arg("install")
+        .current_dir(&package_dir)
+        .env("PLAYWRIGHT_BROWSERS_PATH", &browsers_dir)
+        .status()
+        .await?;
+    if !npm_status.success() {
+        return Err(format!("`npm install` failed with status {npm_status}").into());
+    }
+
+    let npx_status = Command::new("npx")
+        .arg("playwright")
+        .arg("install")
+        .arg("chromium")
+        .current_dir(&package_dir)
+        .env("PLAYWRIGHT_BROWSERS_PATH", &browsers_dir)
+        .status()
+        .await?;
+    if !npx_status.success() {
+        return Err(
+            format!("`npx playwright install chromium` failed with status {npx_status}").into(),
+        );
+    }
+
+    Ok(())
+}
+
+/// Formats a human-readable explanation of the current local Playwright runtime status.
+fn describe_playwright_runtime_status(status: &PlaywrightRuntimeStatus) -> String {
+    match status {
+        PlaywrightRuntimeStatus::Ready => "ready".to_owned(),
+        PlaywrightRuntimeStatus::MissingNode => {
+            "Node.js is not installed or is not on PATH".to_owned()
+        }
+        PlaywrightRuntimeStatus::MissingDriverEntrypoint(path) => format!(
+            "the Playwright driver entrypoint is missing at {}",
+            path.display()
+        ),
+        PlaywrightRuntimeStatus::MissingPackage => {
+            "the local Playwright package is not installed".to_owned()
+        }
+        PlaywrightRuntimeStatus::MissingBrowser => {
+            "the managed Chromium browser binary is not installed".to_owned()
+        }
+        PlaywrightRuntimeStatus::CheckFailed(error) => error.clone(),
     }
 }

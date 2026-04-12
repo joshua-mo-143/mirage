@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
 
-const DEFAULT_WELCOME_BODY: &str = "Type a message below. Use /help for commands. Built-in tools: `bash`, `prompt_cursor`, `subagent`, `read_file`, `edit_file`, `write_file` (whole-file writes only).";
+const DEFAULT_WELCOME_BODY: &str = "Type a message below. Use /help for commands. Built-in tools: `bash`, `playwright`, `prompt_cursor`, `subagent`, `read_file`, `edit_file`, `write_file` (whole-file writes only).";
 
 /// Categorizes transcript entries for rendering and serialization.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -639,6 +639,10 @@ pub fn summarize_tool_call(name: &str, arguments: &impl std::fmt::Display) -> St
             "Bash: {}",
             summarize_argument_field(&json, "command", &arguments_text)
         ),
+        "playwright" => format!(
+            "Playwright: {}",
+            summarize_playwright_call(&json, &arguments_text)
+        ),
         "prompt_cursor" => format!(
             "Prompt Cursor: {}",
             summarize_argument_field(&json, "prompt", &arguments_text)
@@ -676,6 +680,7 @@ fn tool_label(name: &str) -> &'static str {
         "edit_file" => "File edit",
         "write_file" => "File write",
         "bash" => "Bash",
+        "playwright" => "Playwright",
         "prompt_cursor" => "Prompt Cursor",
         "subagent" => "Subagent",
         _ => "Tool",
@@ -750,6 +755,61 @@ fn render_subagent_tool_aggregate_title(
 fn summarize_argument_field(json: &Option<Value>, field: &str, fallback: &str) -> String {
     json.as_ref()
         .and_then(|value| value.get(field))
+        .and_then(Value::as_str)
+        .map(|value| truncate_text(&single_line(value), 80))
+        .unwrap_or_else(|| truncate_text(&single_line(fallback), 80))
+}
+
+/// Builds a concise transcript summary for a Playwright browser automation action.
+fn summarize_playwright_call(json: &Option<Value>, fallback: &str) -> String {
+    let Some(json) = json.as_ref() else {
+        return truncate_text(&single_line(fallback), 80);
+    };
+
+    let action = json
+        .get("action")
+        .and_then(Value::as_str)
+        .unwrap_or("action");
+
+    match action {
+        "create_session" => "create session".to_owned(),
+        "navigate" => format!("navigate {}", json_string_field(json, "url", fallback)),
+        "click" => format!("click {}", json_string_field(json, "selector", fallback)),
+        "fill" => format!("fill {}", json_string_field(json, "selector", fallback)),
+        "press" => {
+            let key = json_string_field(json, "key", "key");
+            let selector = json_string_field(json, "selector", "target");
+            format!("press {key} on {selector}")
+        }
+        "wait_for" => format!("wait for {}", json_string_field(json, "selector", fallback)),
+        "extract_text" => {
+            let selector = json
+                .get("selector")
+                .and_then(Value::as_str)
+                .filter(|value| !value.is_empty())
+                .map(|value| truncate_text(&single_line(value), 80))
+                .unwrap_or_else(|| "body".to_owned());
+            format!("extract text from {selector}")
+        }
+        "screenshot" => {
+            let path = json
+                .get("path")
+                .and_then(Value::as_str)
+                .filter(|value| !value.is_empty())
+                .map(|value| truncate_text(&single_line(value), 80));
+            match path {
+                Some(path) => format!("screenshot {path}"),
+                None => "take screenshot".to_owned(),
+            }
+        }
+        "close_session" => "close session".to_owned(),
+        _ => truncate_text(&single_line(fallback), 80),
+    }
+}
+
+/// Extracts and truncates a named string field from a parsed JSON value.
+fn json_string_field(json: &Value, field: &str, fallback: &str) -> String {
+    json.get(field)
         .and_then(Value::as_str)
         .map(|value| truncate_text(&single_line(value), 80))
         .unwrap_or_else(|| truncate_text(&single_line(fallback), 80))
