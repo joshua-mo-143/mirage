@@ -1,7 +1,7 @@
-use super::{App, FocusArea, StreamEvent};
+use super::{App, FocusArea};
 use crate::app::helpers::rect_contains_point;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
-use mirage_core::VeniceAgent;
+use mirage_core::{VeniceAgent, session::StreamEvent};
 use tokio::sync::mpsc;
 
 impl App {
@@ -69,27 +69,39 @@ impl App {
             KeyCode::Right if matches!(self.focus, FocusArea::Transcript) => {
                 self.expand_selected_subagent_group();
             }
-            KeyCode::Backspace if matches!(self.focus, FocusArea::Composer) && !self.streaming => {
+            KeyCode::Backspace
+                if matches!(self.focus, FocusArea::Composer) && !self.session.streaming =>
+            {
                 self.backspace();
             }
-            KeyCode::Delete if matches!(self.focus, FocusArea::Composer) && !self.streaming => {
+            KeyCode::Delete
+                if matches!(self.focus, FocusArea::Composer) && !self.session.streaming =>
+            {
                 self.delete();
             }
-            KeyCode::Left if matches!(self.focus, FocusArea::Composer) && !self.streaming => {
+            KeyCode::Left
+                if matches!(self.focus, FocusArea::Composer) && !self.session.streaming =>
+            {
                 self.cursor = self.cursor.saturating_sub(1);
             }
-            KeyCode::Right if matches!(self.focus, FocusArea::Composer) && !self.streaming => {
+            KeyCode::Right
+                if matches!(self.focus, FocusArea::Composer) && !self.session.streaming =>
+            {
                 self.cursor = (self.cursor + 1).min(self.input_chars().len());
             }
-            KeyCode::Home if matches!(self.focus, FocusArea::Composer) && !self.streaming => {
+            KeyCode::Home
+                if matches!(self.focus, FocusArea::Composer) && !self.session.streaming =>
+            {
                 self.cursor = 0;
             }
-            KeyCode::End if matches!(self.focus, FocusArea::Composer) && !self.streaming => {
+            KeyCode::End
+                if matches!(self.focus, FocusArea::Composer) && !self.session.streaming =>
+            {
                 self.cursor = self.input_chars().len();
             }
             KeyCode::Char(ch)
                 if matches!(self.focus, FocusArea::Composer)
-                    && !self.streaming
+                    && !self.session.streaming
                     && !key.modifiers.contains(KeyModifiers::CONTROL) =>
             {
                 self.insert_char(ch);

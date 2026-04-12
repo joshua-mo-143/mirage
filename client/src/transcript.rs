@@ -1,163 +1,10 @@
+use mirage_core::session::{
+    SubagentGroup, SubagentStatus, TranscriptEntry, TranscriptItem, TranscriptKind,
+};
 use ratatui::{
     style::{Color, Modifier, Style},
     text::{Line, Span},
 };
-
-#[derive(Clone, Copy)]
-pub(crate) enum TranscriptKind {
-    Meta,
-    User,
-    Assistant,
-    Tool,
-    Error,
-}
-
-pub(crate) struct TranscriptEntry {
-    pub(crate) kind: TranscriptKind,
-    pub(crate) title: String,
-    pub(crate) body: String,
-}
-
-impl TranscriptEntry {
-    pub(crate) fn meta(title: impl Into<String>, body: impl Into<String>) -> Self {
-        Self {
-            kind: TranscriptKind::Meta,
-            title: title.into(),
-            body: body.into(),
-        }
-    }
-
-    pub(crate) fn user(body: impl Into<String>) -> Self {
-        Self {
-            kind: TranscriptKind::User,
-            title: "You".to_owned(),
-            body: body.into(),
-        }
-    }
-
-    pub(crate) fn assistant(body: impl Into<String>) -> Self {
-        Self {
-            kind: TranscriptKind::Assistant,
-            title: "Assistant".to_owned(),
-            body: body.into(),
-        }
-    }
-
-    pub(crate) fn tool(title: impl Into<String>, body: impl Into<String>) -> Self {
-        Self {
-            kind: TranscriptKind::Tool,
-            title: title.into(),
-            body: body.into(),
-        }
-    }
-
-    pub(crate) fn error(body: impl Into<String>) -> Self {
-        Self {
-            kind: TranscriptKind::Error,
-            title: "Error".to_owned(),
-            body: body.into(),
-        }
-    }
-
-    pub(crate) fn title_style(&self) -> Style {
-        match self.kind {
-            TranscriptKind::Meta => Style::default()
-                .fg(Color::DarkGray)
-                .add_modifier(Modifier::BOLD),
-            TranscriptKind::User => Style::default()
-                .fg(Color::Cyan)
-                .add_modifier(Modifier::BOLD),
-            TranscriptKind::Assistant => Style::default()
-                .fg(Color::Green)
-                .add_modifier(Modifier::BOLD),
-            TranscriptKind::Tool => Style::default()
-                .fg(Color::Yellow)
-                .add_modifier(Modifier::BOLD),
-            TranscriptKind::Error => Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
-        }
-    }
-
-    pub(crate) fn body_style(&self) -> Style {
-        match self.kind {
-            TranscriptKind::Meta => Style::default().fg(Color::Gray),
-            TranscriptKind::Error => Style::default().fg(Color::Red),
-            _ => Style::default(),
-        }
-    }
-
-    pub(crate) fn to_plaintext(&self, title_indent: &str, body_indent: &str) -> String {
-        let mut lines = vec![format!("{title_indent}{}", self.title)];
-        if self.body.is_empty() {
-            return lines.join("\n");
-        }
-
-        for line in self.body.lines() {
-            lines.push(format!("{body_indent}{line}"));
-        }
-        lines.join("\n")
-    }
-}
-
-pub(crate) enum TranscriptItem {
-    Entry(TranscriptEntry),
-    SubagentGroup(SubagentGroup),
-}
-
-impl TranscriptItem {
-    pub(crate) fn entry_mut(&mut self) -> Option<&mut TranscriptEntry> {
-        match self {
-            Self::Entry(entry) => Some(entry),
-            Self::SubagentGroup(_) => None,
-        }
-    }
-
-    pub(crate) fn entry(&self) -> Option<&TranscriptEntry> {
-        match self {
-            Self::Entry(entry) => Some(entry),
-            Self::SubagentGroup(_) => None,
-        }
-    }
-
-    pub(crate) fn to_plaintext(&self) -> String {
-        match self {
-            Self::Entry(entry) => entry.to_plaintext("", "  "),
-            Self::SubagentGroup(group) => group.to_plaintext(),
-        }
-    }
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum SubagentStatus {
-    Running,
-    Complete,
-    Failed,
-}
-
-pub(crate) struct SubagentGroup {
-    pub(crate) summary: String,
-    pub(crate) status: SubagentStatus,
-    pub(crate) expanded: bool,
-    pub(crate) entries: Vec<TranscriptEntry>,
-}
-
-impl SubagentGroup {
-    pub(crate) fn new(summary: impl Into<String>) -> Self {
-        Self {
-            summary: summary.into(),
-            status: SubagentStatus::Running,
-            expanded: false,
-            entries: Vec::new(),
-        }
-    }
-
-    pub(crate) fn to_plaintext(&self) -> String {
-        let mut parts = vec![subagent_group_title(self)];
-        for entry in &self.entries {
-            parts.push(entry.to_plaintext("  ", "    "));
-        }
-        parts.join("\n")
-    }
-}
 
 pub(crate) struct RenderedTranscript {
     pub(crate) lines: Vec<Line<'static>>,
@@ -252,7 +99,7 @@ fn push_entry_lines(
         ),
         Span::styled(
             entry.title.clone(),
-            selectable_style(entry.title_style(), selected),
+            selectable_style(entry_title_style(entry.kind), selected),
         ),
     ]));
 
@@ -262,13 +109,39 @@ fn push_entry_lines(
         for line in entry.body.lines() {
             lines.push(Line::from(vec![
                 Span::styled(body_indent.to_owned(), Style::default().fg(Color::DarkGray)),
-                Span::styled(line.to_owned(), entry.body_style()),
+                Span::styled(line.to_owned(), entry_body_style(entry.kind)),
             ]));
         }
     }
 
     if trailing_blank {
         lines.push(Line::raw(String::new()));
+    }
+}
+
+fn entry_title_style(kind: TranscriptKind) -> Style {
+    match kind {
+        TranscriptKind::Meta => Style::default()
+            .fg(Color::DarkGray)
+            .add_modifier(Modifier::BOLD),
+        TranscriptKind::User => Style::default()
+            .fg(Color::Cyan)
+            .add_modifier(Modifier::BOLD),
+        TranscriptKind::Assistant => Style::default()
+            .fg(Color::Green)
+            .add_modifier(Modifier::BOLD),
+        TranscriptKind::Tool => Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD),
+        TranscriptKind::Error => Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+    }
+}
+
+fn entry_body_style(kind: TranscriptKind) -> Style {
+    match kind {
+        TranscriptKind::Meta => Style::default().fg(Color::Gray),
+        TranscriptKind::Error => Style::default().fg(Color::Red),
+        _ => Style::default(),
     }
 }
 

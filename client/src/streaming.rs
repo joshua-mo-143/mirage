@@ -3,11 +3,10 @@ use mirage_core::{
     VeniceAgent,
     agent::{MultiTurnStreamItem, Text},
     message::Message,
+    session::{StreamEvent, summarize_tool_call},
     streaming::{StreamedAssistantContent, StreamedUserContent, StreamingPrompt},
 };
 use tokio::sync::mpsc;
-
-use crate::app::{StreamEvent, summarize_tool_call};
 
 pub(crate) async fn stream_agent_response(
     agent: VeniceAgent,

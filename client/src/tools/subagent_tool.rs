@@ -1,5 +1,5 @@
 use crate::tools::cursor_session::{CursorSessionError, CursorSessionStore};
-use mirage_core::{Tool, completion::ToolDefinition};
+use mirage_core::{Tool, completion::ToolDefinition, session::SubagentProgressEvent};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::{
@@ -31,34 +31,6 @@ struct SubagentInvocation {
     program: String,
     args: Vec<String>,
     cwd: Option<PathBuf>,
-}
-
-#[derive(Debug, Clone)]
-pub enum SubagentProgressEvent {
-    Started {
-        id: String,
-        summary: String,
-    },
-    AssistantDelta {
-        id: String,
-        text: String,
-    },
-    ToolStarted {
-        id: String,
-        description: String,
-    },
-    ToolCompleted {
-        id: String,
-        description: String,
-        output: Option<String>,
-    },
-    Finished {
-        id: String,
-    },
-    Failed {
-        id: String,
-        error: String,
-    },
 }
 
 #[derive(Debug, Error)]

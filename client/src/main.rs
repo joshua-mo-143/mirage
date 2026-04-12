@@ -9,12 +9,12 @@ mod tui;
 use clap::Parser;
 use crossterm::event::{Event, EventStream};
 use futures::StreamExt;
-use mirage_core::{VeniceClient, VeniceConfig};
+use mirage_core::{VeniceClient, VeniceConfig, session::StreamEvent};
 use std::{error::Error, sync::Arc};
 use tokio::sync::mpsc;
 
 use crate::{
-    app::{App, StreamEvent},
+    app::App,
     args::Args,
     tools::{
         bash_tool::BashTool,
