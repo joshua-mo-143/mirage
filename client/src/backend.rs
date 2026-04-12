@@ -2,6 +2,7 @@ use crate::{args::Args, config::RemoteServerConfig, streaming::stream_agent_resp
 use futures::StreamExt;
 use mirage_core::{
     VeniceAgent, VeniceClient, VeniceConfig,
+    debug_stream::StreamDebugLogger,
     session::{StreamEvent, SubagentProgressEvent},
     tools::{
         bash_tool::BashTool,
@@ -90,6 +91,7 @@ pub(crate) async fn build_backend(
 
 pub(crate) async fn launch_local_server(
     remote: &RemoteServerConfig,
+    debug_stream_log: Option<&str>,
 ) -> Result<LaunchLocalServerResult, Box<dyn Error>> {
     if wait_for_server(remote, Duration::from_millis(300))
         .await
@@ -101,14 +103,24 @@ pub(crate) async fn launch_local_server(
     }
 
     let bind_addr = bind_addr_from_server_url(&remote.server_url)?;
-    let startup_timeout = spawn_server_command("mirage-server", &bind_addr, &remote.admin_api_key)
-        .map(|_| Duration::from_secs(15))
+    let startup_timeout = spawn_server_command(
+        "mirage-server",
+        &bind_addr,
+        &remote.admin_api_key,
+        debug_stream_log,
+    )
+    .map(|_| Duration::from_secs(15))
         .or_else(|primary_error| {
             let Some(workspace_root) = workspace_root() else {
                 return Err(primary_error);
             };
 
-            spawn_server_cargo_fallback(&workspace_root, &bind_addr, &remote.admin_api_key)
+            spawn_server_cargo_fallback(
+                &workspace_root,
+                &bind_addr,
+                &remote.admin_api_key,
+                debug_stream_log,
+            )
                 .map(|_| Duration::from_secs(90))
                 .map_err(|fallback_error| {
                     format!(
@@ -191,6 +203,7 @@ pub(crate) enum StopServerMethod {
 
 pub(crate) struct LocalBackend {
     agent: VeniceAgent,
+    debug_logger: Option<StreamDebugLogger>,
     tx: mpsc::UnboundedSender<BackendEvent>,
 }
 
@@ -200,6 +213,10 @@ impl LocalBackend {
         cursor_sessions: Arc<CursorSessionStore>,
         tx: mpsc::UnboundedSender<BackendEvent>,
     ) -> Result<Self, Box<dyn Error>> {
+        let debug_logger = StreamDebugLogger::from_optional_path_or_env(
+            "MIRAGE_DEBUG_STREAM_LOG",
+            args.debug_stream_log.as_deref(),
+        )?;
         let config = VeniceConfig::from_env()?
             .with_authority(args.authority.clone())
             .with_base_path(args.base_path.clone());
@@ -254,12 +271,17 @@ impl LocalBackend {
             .tool(WriteFileTool)
             .build();
 
-        Ok(Self { agent, tx })
+        Ok(Self {
+            agent,
+            debug_logger,
+            tx,
+        })
     }
 
     fn submit_prompt(&mut self, service: &mut SessionService, prompt: String) {
         let request = service.submit_prompt(prompt);
         let agent = self.agent.clone();
+        let debug_logger = self.debug_logger.clone();
         let tx = self.tx.clone();
         tokio::spawn(async move {
             stream_agent_response(
@@ -268,6 +290,7 @@ impl LocalBackend {
                 request.history,
                 request.max_turns,
                 tx,
+                debug_logger,
             )
             .await;
         });
@@ -751,6 +774,7 @@ fn spawn_server_command(
     command_name: &str,
     bind_addr: &str,
     admin_api_key: &str,
+    debug_stream_log: Option<&str>,
 ) -> Result<(), String> {
     let mut command = Command::new(command_name);
     command
@@ -759,6 +783,9 @@ fn spawn_server_command(
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
+    if let Some(path) = debug_stream_log {
+        command.env("MIRAGE_DEBUG_STREAM_LOG", path);
+    }
     command
         .spawn()
         .map(|_| ())
@@ -769,6 +796,7 @@ fn spawn_server_cargo_fallback(
     workspace_root: &PathBuf,
     bind_addr: &str,
     admin_api_key: &str,
+    debug_stream_log: Option<&str>,
 ) -> Result<(), String> {
     let mut command = Command::new("cargo");
     command
@@ -781,6 +809,9 @@ fn spawn_server_cargo_fallback(
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
+    if let Some(path) = debug_stream_log {
+        command.env("MIRAGE_DEBUG_STREAM_LOG", path);
+    }
     command
         .spawn()
         .map(|_| ())

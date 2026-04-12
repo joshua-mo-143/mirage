@@ -13,6 +13,7 @@ use futures_util::StreamExt;
 use mirage_core::{
     VeniceClient, VeniceConfig,
     agent::{MultiTurnStreamItem, Text},
+    debug_stream::StreamDebugLogger,
     session::{StreamEvent, summarize_tool_call},
     streaming::{StreamedAssistantContent, StreamedUserContent, StreamingPrompt},
     tools::{
@@ -120,6 +121,7 @@ struct ServerState {
     http_client: reqwest::Client,
     telegram: TelegramConfig,
     cursor_sessions: Arc<CursorSessionStore>,
+    stream_debug_logger: Option<StreamDebugLogger>,
     shutdown_tx: Arc<Mutex<Option<oneshot::Sender<()>>>>,
 }
 
@@ -188,6 +190,8 @@ type ApiResult<T> = Result<Json<T>, ApiError>;
 async fn main() -> Result<(), Box<dyn Error>> {
     let server_config = ServerConfig::from_env()?;
     let (shutdown_tx, shutdown_rx) = oneshot::channel();
+    let stream_debug_logger =
+        StreamDebugLogger::from_optional_path_or_env("MIRAGE_DEBUG_STREAM_LOG", None)?;
     let venice_config = VeniceConfig::from_env()?
         .with_authority(server_config.service.authority.clone())
         .with_base_path(server_config.service.base_path.clone());
@@ -202,6 +206,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         http_client: reqwest::Client::new(),
         telegram: server_config.telegram,
         cursor_sessions: Arc::new(CursorSessionStore::default()),
+        stream_debug_logger,
         shutdown_tx: Arc::new(Mutex::new(Some(shutdown_tx))),
     });
 
@@ -489,6 +494,16 @@ async fn run_prompt(
             Ok(_) => continue,
             Err(error) => StreamEvent::Error(error.to_string()),
         };
+
+        if let Some(debug_logger) = &state.stream_debug_logger
+            && let Err(error) = debug_logger.log_stream_event("server", Some(&session_id), &event)
+        {
+            eprintln!(
+                "failed to write server stream debug event to {}: {}",
+                debug_logger.path().display(),
+                error
+            );
+        }
 
         let is_terminal = matches!(&event, StreamEvent::Final(_) | StreamEvent::Error(_));
         let snapshot = {

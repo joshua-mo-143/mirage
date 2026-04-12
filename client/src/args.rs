@@ -65,4 +65,8 @@ pub(crate) struct Args {
     /// Force-restart the local Mirage server before opening the TUI.
     #[arg(long, default_value_t = false)]
     pub(crate) restart_server: bool,
+
+    /// Append raw streamed assistant/tool events as JSONL for debugging.
+    #[arg(long, env = "MIRAGE_DEBUG_STREAM_LOG")]
+    pub(crate) debug_stream_log: Option<String>,
 }

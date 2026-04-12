@@ -81,7 +81,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 }
             }
         }
-        let launch_result = launch_local_server(&remote).await?;
+        let launch_result = launch_local_server(&remote, args.debug_stream_log.as_deref()).await?;
         if let Some(path) = maybe_prompt_to_save_remote(&mut client_config, &remote)? {
             println!("Saved Mirage remote config to {}", path.display());
         } else if launch_result.already_running {

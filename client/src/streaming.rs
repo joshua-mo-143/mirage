@@ -3,6 +3,7 @@ use futures::StreamExt;
 use mirage_core::{
     VeniceAgent,
     agent::{MultiTurnStreamItem, Text},
+    debug_stream::StreamDebugLogger,
     message::Message,
     session::{StreamEvent, summarize_tool_call},
     streaming::{StreamedAssistantContent, StreamedUserContent, StreamingPrompt},
@@ -15,6 +16,7 @@ pub(crate) async fn stream_agent_response(
     history: Vec<Message>,
     max_turns: usize,
     tx: mpsc::UnboundedSender<BackendEvent>,
+    debug_logger: Option<StreamDebugLogger>,
 ) {
     let mut stream = agent
         .stream_prompt(prompt)
@@ -49,6 +51,16 @@ pub(crate) async fn stream_agent_response(
             Ok(_) => continue,
             Err(error) => StreamEvent::Error(error.to_string()),
         };
+
+        if let Some(debug_logger) = &debug_logger
+            && let Err(error) = debug_logger.log_stream_event("client-local", None, &event)
+        {
+            eprintln!(
+                "failed to write client stream debug event to {}: {}",
+                debug_logger.path().display(),
+                error
+            );
+        }
 
         let is_terminal = matches!(event, StreamEvent::Final(_) | StreamEvent::Error(_));
         if tx.send(BackendEvent::Stream(event)).is_err() {

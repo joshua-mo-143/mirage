@@ -4,6 +4,7 @@
 //! only the Venice-specific configuration layer and re-exports Rig's agent,
 //! tool, and prompting APIs for higher-level use.
 
+pub mod debug_stream;
 pub mod session;
 pub mod tools;
 pub mod venice;
