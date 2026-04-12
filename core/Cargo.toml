@@ -1,0 +1,17 @@
+[package]
+name = "mirage-core"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+rig = { package = "rig-core", version = "0.34.0" }
+rig-core = { version = "0.34.0", features = ["derive"] }
+thiserror = "2.0.18"
+
+[dev-dependencies]
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.149"
+tokio = { version = "1.51.1", features = ["macros", "rt-multi-thread"] }
