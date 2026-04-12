@@ -1,0 +1,11 @@
+[package]
+name = "mirage-service"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+mirage-core = { version = "0.1.0", path = "../core" }
+serde = { version = "1.0.228", features = ["derive"] }

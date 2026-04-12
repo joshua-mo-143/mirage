@@ -1,8 +1,8 @@
-use mirage_core::session::Session;
+use mirage_service::SessionService;
 use ratatui::layout::Rect;
 use std::sync::Arc;
 
-use crate::{args::Args, tools::cursor_session::CursorSessionStore};
+use mirage_core::tools::cursor_session::CursorSessionStore;
 
 mod commands;
 mod events;
@@ -27,16 +27,11 @@ pub(crate) enum TranscriptScrollMode {
 }
 
 pub(crate) struct App {
-    pub(crate) session: Session,
+    pub(crate) service: SessionService,
+    pub(crate) backend_description: String,
     input: String,
     cursor: usize,
     pub(crate) should_quit: bool,
-    pub(crate) model: String,
-    max_turns: usize,
-    authority: String,
-    base_path: String,
-    system_prompt_configured: bool,
-    pub(crate) uncensored: bool,
     pub(crate) selection_mode: bool,
     pub(crate) focus: FocusArea,
     pub(crate) selected_transcript: usize,

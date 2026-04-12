@@ -5,6 +5,7 @@
 //! tool, and prompting APIs for higher-level use.
 
 pub mod session;
+pub mod tools;
 pub mod venice;
 
 pub use rig::agent::{Agent, AgentBuilder, NoToolConfig, WithBuilderTools, WithToolServerHandle};

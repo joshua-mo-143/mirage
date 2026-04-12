@@ -1,11 +1,13 @@
 use super::{App, TranscriptScrollMode};
 use crate::{
     args::Args,
-    tools::cursor_session::CursorSessionStore,
     transcript::{build_transcript_lines, wrapped_line_count},
 };
 use crossterm::event::{KeyModifiers, MouseEvent, MouseEventKind};
-use mirage_core::session::{SubagentProgressEvent, TranscriptEntry, TranscriptItem};
+use mirage_core::{
+    session::{SubagentProgressEvent, TranscriptEntry, TranscriptItem},
+    tools::cursor_session::CursorSessionStore,
+};
 use ratatui::layout::Rect;
 use std::sync::Arc;
 
@@ -20,13 +22,21 @@ fn test_args() -> Args {
         max_turns: 8,
         authority: "api.venice.ai".to_owned(),
         base_path: "/api/v1".to_owned(),
+        server_url: None,
+        admin_key: None,
+        local: false,
+        start_server: false,
+        stop_server: false,
+        restart_server: false,
     }
 }
 
 fn app_with_transcript() -> App {
     let mut app = App::new(&test_args(), Arc::new(CursorSessionStore::default()));
-    app.session.push_entry(TranscriptEntry::user("hello"));
-    app.session.streaming = true;
+    app.service
+        .session_mut()
+        .push_entry(TranscriptEntry::user("hello"));
+    app.service.session_mut().streaming = true;
     app
 }
 
@@ -44,18 +54,23 @@ fn wrapped_line_count_accounts_for_wrapped_visual_rows() {
 #[test]
 fn collapsed_subagent_groups_hide_child_entries_in_rendered_transcript() {
     let mut app = app_with_transcript();
-    app.session
+    app.service
+        .session_mut()
         .apply_subagent_event(SubagentProgressEvent::Started {
             id: "subagent-1".to_owned(),
             summary: "Inspect the repo".to_owned(),
         });
-    app.session
+    app.service
+        .session_mut()
         .apply_subagent_event(SubagentProgressEvent::AssistantDelta {
             id: "subagent-1".to_owned(),
             text: "Thinking...".to_owned(),
         });
 
-    let collapsed = build_transcript_lines(&app.session.transcript, Some(app.selected_transcript));
+    let collapsed = build_transcript_lines(
+        &app.service.session().transcript,
+        Some(app.selected_transcript),
+    );
     let collapsed_text = collapsed
         .lines
         .iter()
@@ -65,11 +80,16 @@ fn collapsed_subagent_groups_hide_child_entries_in_rendered_transcript() {
     assert!(collapsed_text.contains("[+] Subagent running"));
     assert!(!collapsed_text.contains("Thinking..."));
 
-    if let Some(TranscriptItem::SubagentGroup(group)) = app.session.transcript.last_mut() {
+    if let Some(TranscriptItem::SubagentGroup(group)) =
+        app.service.session_mut().transcript.last_mut()
+    {
         group.expanded = true;
     }
 
-    let expanded = build_transcript_lines(&app.session.transcript, Some(app.selected_transcript));
+    let expanded = build_transcript_lines(
+        &app.service.session().transcript,
+        Some(app.selected_transcript),
+    );
     let expanded_text = expanded
         .lines
         .iter()
@@ -83,17 +103,19 @@ fn collapsed_subagent_groups_hide_child_entries_in_rendered_transcript() {
 fn selected_transcript_text_serializes_subagent_group() {
     let mut app = app_with_transcript();
 
-    app.session
+    app.service
+        .session_mut()
         .apply_subagent_event(SubagentProgressEvent::Started {
             id: "subagent-1".to_owned(),
             summary: "Inspect the repo".to_owned(),
         });
-    app.session
+    app.service
+        .session_mut()
         .apply_subagent_event(SubagentProgressEvent::AssistantDelta {
             id: "subagent-1".to_owned(),
             text: "Thinking...".to_owned(),
         });
-    app.selected_transcript = app.session.transcript.len() - 1;
+    app.selected_transcript = app.service.session().transcript.len() - 1;
 
     let text = app.selected_transcript_text().unwrap();
 
@@ -192,7 +214,7 @@ fn selection_mode_methods_toggle_state() {
     app.toggle_selection_mode();
 
     assert!(app.selection_mode);
-    assert!(app.session.status.contains("Ctrl+G"));
+    assert!(app.service.session().status.contains("Ctrl+G"));
 }
 
 #[test]

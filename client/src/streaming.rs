@@ -1,3 +1,4 @@
+use crate::backend::BackendEvent;
 use futures::StreamExt;
 use mirage_core::{
     VeniceAgent,
@@ -13,7 +14,7 @@ pub(crate) async fn stream_agent_response(
     prompt: String,
     history: Vec<Message>,
     max_turns: usize,
-    tx: mpsc::UnboundedSender<StreamEvent>,
+    tx: mpsc::UnboundedSender<BackendEvent>,
 ) {
     let mut stream = agent
         .stream_prompt(prompt)
@@ -50,7 +51,7 @@ pub(crate) async fn stream_agent_response(
         };
 
         let is_terminal = matches!(event, StreamEvent::Final(_) | StreamEvent::Error(_));
-        if tx.send(event).is_err() {
+        if tx.send(BackendEvent::Stream(event)).is_err() {
             break;
         }
         if is_terminal {

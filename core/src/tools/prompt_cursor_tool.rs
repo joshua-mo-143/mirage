@@ -1,5 +1,5 @@
 use crate::tools::cursor_session::{CursorSessionError, CursorSessionStore};
-use mirage_core::{Tool, completion::ToolDefinition};
+use crate::{Tool, completion::ToolDefinition};
 use serde::Deserialize;
 use serde_json::json;
 use std::process::Command;

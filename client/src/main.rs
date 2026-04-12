@@ -1,7 +1,7 @@
-pub mod tools;
-
 mod app;
 mod args;
+mod backend;
+mod config;
 mod streaming;
 mod transcript;
 mod tui;
@@ -9,80 +9,105 @@ mod tui;
 use clap::Parser;
 use crossterm::event::{Event, EventStream};
 use futures::StreamExt;
-use mirage_core::{VeniceClient, VeniceConfig, session::StreamEvent};
+use mirage_core::tools::cursor_session::CursorSessionStore;
 use std::{error::Error, sync::Arc};
 use tokio::sync::mpsc;
+use uuid::Uuid;
 
 use crate::{
     app::App,
     args::Args,
-    tools::{
-        bash_tool::BashTool,
-        cursor_session::CursorSessionStore,
-        file_tools::{EditFileTool, ReadFileTool, WriteFileTool},
-        prompt_cursor_tool::PromptCursorTool,
-        subagent_tool::SubagentTool,
-    },
+    backend::{BackendEvent, StopServerMethod, build_backend, launch_local_server, stop_server},
+    config::{ClientConfig, RemoteServerConfig, maybe_prompt_to_save_remote},
     tui::Tui,
 };
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
     let args = Args::parse();
-    let config = VeniceConfig::from_env()?
-        .with_authority(args.authority.clone())
-        .with_base_path(args.base_path.clone());
-    let client = VeniceClient::new(config)?;
-    let mut agent_builder = client
-        .agent(args.model.clone())
-        .default_max_turns(args.max_turns);
+    if args.local && (args.start_server || args.stop_server || args.restart_server) {
+        return Err(
+            "`--local` cannot be combined with `--start-server`, `--stop-server`, or `--restart-server`"
+                .into(),
+        );
+    }
+    if args.stop_server && args.restart_server {
+        return Err("`--stop-server` and `--restart-server` cannot be combined".into());
+    }
 
-    agent_builder = agent_builder.additional_params(serde_json::json!({
-        "venice_parameters": {
-            "include_venice_system_prompt": args.uncensored
+    let mut client_config = ClientConfig::load_or_default()?;
+    if args.stop_server {
+        let remote = remote_config_for_start(&args, &client_config);
+        let stop_result = stop_server(&remote).await?;
+        match stop_result.method {
+            StopServerMethod::HttpShutdown => {
+                println!(
+                    "Stopped Mirage server at {} via admin shutdown.",
+                    remote.server_url
+                );
+            }
+            StopServerMethod::LocalProcessKill => {
+                println!(
+                    "Stopped Mirage server at {} by terminating the local process.",
+                    remote.server_url
+                );
+            }
+            StopServerMethod::NotRunning => {
+                println!("No Mirage server was running at {}.", remote.server_url);
+            }
         }
-    }));
-
-    if let Some(system_prompt) = args.system_prompt.as_deref() {
-        agent_builder = agent_builder.preamble(system_prompt);
+        return Ok(());
     }
 
-    agent_builder = agent_builder.append_preamble(
-        "Tool usage guidance:
-- Prefer discovering capabilities by using `bash` instead of assuming what commands, binaries, files, or directories are available.
-- Use `bash` freely for arbitrary shell commands, environment inspection, and capability discovery.
-- Use `subagent` when you want to delegate a deeper investigation or planning task to a child Cursor agent and incorporate its final answer.
-- Use `read_file` to inspect files before editing them when needed.
-- Prefer `edit_file` for modifying part of an existing file.
-- Use `write_file` only when creating a new file, replacing an entire file, or appending whole-file content intentionally.
-- Use `prompt_cursor` when you want the local Cursor agent CLI (`agent -p`) to answer or inspect something.",
-    );
+    let launched_remote = if args.start_server || args.restart_server {
+        let remote = remote_config_for_start(&args, &client_config);
+        if args.restart_server {
+            let stop_result = stop_server(&remote).await?;
+            if stop_result.stopped {
+                match stop_result.method {
+                    StopServerMethod::HttpShutdown => {
+                        println!(
+                            "Stopped existing Mirage server at {} via admin shutdown.",
+                            remote.server_url
+                        );
+                    }
+                    StopServerMethod::LocalProcessKill => {
+                        println!(
+                            "Stopped existing Mirage server at {} by terminating the local process.",
+                            remote.server_url
+                        );
+                    }
+                    StopServerMethod::NotRunning => {}
+                }
+            }
+        }
+        let launch_result = launch_local_server(&remote).await?;
+        if let Some(path) = maybe_prompt_to_save_remote(&mut client_config, &remote)? {
+            println!("Saved Mirage remote config to {}", path.display());
+        } else if launch_result.already_running {
+            println!("Using existing Mirage server at {}", remote.server_url);
+        }
+        Some(remote)
+    } else {
+        None
+    };
 
-    if let Some(temperature) = args.temperature {
-        agent_builder = agent_builder.temperature(f64::from(temperature));
-    }
-
-    if let Some(max_tokens) = args.max_completion_tokens {
-        agent_builder = agent_builder.max_tokens(u64::from(max_tokens));
-    }
-
-    let (subagent_tx, mut subagent_rx) = mpsc::unbounded_channel();
+    let remote = resolve_remote_config(&args, &client_config, launched_remote)?;
     let cursor_sessions = Arc::new(CursorSessionStore::default());
-    let agent = agent_builder
-        .tool(BashTool)
-        .tool(PromptCursorTool::new(cursor_sessions.clone()))
-        .tool(SubagentTool::new(subagent_tx, cursor_sessions.clone()))
-        .tool(ReadFileTool)
-        .tool(EditFileTool)
-        .tool(WriteFileTool)
-        .build();
     let (tx, mut rx) = mpsc::unbounded_channel();
-    let mut app = App::new(&args, cursor_sessions);
+    let (service, mut backend) =
+        build_backend(&args, cursor_sessions.clone(), tx.clone(), remote).await?;
+    let mut app = App::from_service(
+        service,
+        args.prompt.clone().unwrap_or_default(),
+        cursor_sessions,
+        backend.description(),
+    );
     let mut tui = Tui::new()?;
     let mut events = EventStream::new();
 
     if app.can_submit() {
-        app.process_enter(agent.clone(), tx.clone());
+        app.process_enter(&mut backend);
     }
 
     while !app.should_quit {
@@ -92,7 +117,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             maybe_event = events.next() => {
                 match maybe_event {
                     Some(Ok(Event::Key(key))) if key.kind.is_press() => {
-                        app.handle_key(key, agent.clone(), tx.clone());
+                        app.handle_key(key, &mut backend);
                     }
                     Some(Ok(Event::Mouse(mouse))) => {
                         app.handle_mouse(mouse);
@@ -100,25 +125,77 @@ async fn main() -> Result<(), Box<dyn Error>> {
                     Some(Ok(Event::Resize(_, _))) => {}
                     Some(Ok(_)) => {}
                     Some(Err(error)) => {
-                        app.apply_stream_event(StreamEvent::Error(format!("terminal event error: {error}")));
+                        app.apply_remote_error(format!("terminal event error: {error}"));
                     }
                     None => break,
                 }
             }
-            maybe_stream = rx.recv() => {
-                if let Some(event) = maybe_stream {
-                    app.apply_stream_event(event);
-                } else {
-                    break;
-                }
-            }
-            maybe_subagent = subagent_rx.recv() => {
-                if let Some(event) = maybe_subagent {
-                    app.apply_subagent_event(event);
+            maybe_backend = rx.recv() => {
+                match maybe_backend {
+                    Some(BackendEvent::Stream(event)) => app.apply_stream_event(event),
+                    Some(BackendEvent::Subagent(event)) => app.apply_subagent_event(event),
+                    Some(BackendEvent::RemoteSnapshot(snapshot)) => app.apply_remote_snapshot(snapshot),
+                    Some(BackendEvent::RemoteError(error)) => app.apply_remote_error(error),
+                    None => break,
                 }
             }
         }
     }
 
     Ok(())
+}
+
+fn resolve_remote_config(
+    args: &Args,
+    client_config: &ClientConfig,
+    launched_remote: Option<RemoteServerConfig>,
+) -> Result<Option<RemoteServerConfig>, Box<dyn Error>> {
+    if args.local {
+        return Ok(None);
+    }
+
+    if let Some(remote) = launched_remote {
+        return Ok(Some(remote));
+    }
+
+    let saved = client_config.remote.as_ref();
+    let server_url = args
+        .server_url
+        .clone()
+        .or_else(|| saved.map(|remote| remote.server_url.clone()));
+    let admin_api_key = args
+        .admin_key
+        .clone()
+        .or_else(|| saved.map(|remote| remote.admin_api_key.clone()));
+
+    match (server_url, admin_api_key) {
+        (Some(server_url), Some(admin_api_key)) => Ok(Some(RemoteServerConfig {
+            server_url,
+            admin_api_key,
+        })),
+        (None, None) => Ok(None),
+        (Some(_), None) => {
+            Err("Mirage server URL is configured but no admin key was provided or saved".into())
+        }
+        (None, Some(_)) => Err("Mirage admin key was provided without a server URL".into()),
+    }
+}
+
+fn remote_config_for_start(args: &Args, client_config: &ClientConfig) -> RemoteServerConfig {
+    let saved = client_config.remote.as_ref();
+    let server_url = args
+        .server_url
+        .clone()
+        .or_else(|| saved.map(|remote| remote.server_url.clone()))
+        .unwrap_or_else(|| "http://127.0.0.1:3000".to_owned());
+    let admin_api_key = args
+        .admin_key
+        .clone()
+        .or_else(|| saved.map(|remote| remote.admin_api_key.clone()))
+        .unwrap_or_else(|| Uuid::new_v4().to_string());
+
+    RemoteServerConfig {
+        server_url,
+        admin_api_key,
+    }
 }

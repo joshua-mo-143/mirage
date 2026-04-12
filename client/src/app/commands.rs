@@ -1,13 +1,9 @@
 use super::{App, FocusArea, TranscriptScrollMode};
-use mirage_core::{VeniceAgent, session::TranscriptEntry};
-use tokio::sync::mpsc;
+use crate::backend::ClientBackend;
+use mirage_core::session::TranscriptEntry;
 
 impl App {
-    pub(crate) fn process_enter(
-        &mut self,
-        agent: VeniceAgent,
-        tx: mpsc::UnboundedSender<mirage_core::session::StreamEvent>,
-    ) {
+    pub(crate) fn process_enter(&mut self, backend: &mut ClientBackend) {
         if matches!(self.focus, FocusArea::Transcript) {
             self.toggle_selected_subagent_group();
             return;
@@ -22,48 +18,39 @@ impl App {
         self.cursor = 0;
 
         if input.starts_with('/') {
-            self.handle_command(&input);
+            self.handle_command(backend, &input);
         } else {
-            self.submit_prompt(agent, tx, input);
+            self.submit_prompt(backend, input);
         }
     }
 
-    fn submit_prompt(
-        &mut self,
-        agent: VeniceAgent,
-        tx: mpsc::UnboundedSender<mirage_core::session::StreamEvent>,
-        prompt: String,
-    ) {
-        let history = self.session.history.clone();
-        self.session.begin_prompt(prompt.clone());
+    fn submit_prompt(&mut self, backend: &mut ClientBackend, prompt: String) {
+        backend.submit_prompt(&mut self.service, prompt);
         self.follow_transcript_tail_if_composing();
-
-        let max_turns = self.max_turns;
-        tokio::spawn(async move {
-            crate::streaming::stream_agent_response(agent, prompt, history, max_turns, tx).await;
-        });
     }
 
-    fn handle_command(&mut self, command: &str) {
+    fn handle_command(&mut self, backend: &mut ClientBackend, command: &str) {
         match command {
             "/help" => {
                 self.push_session_entry(TranscriptEntry::meta(
                     "Commands",
-                    "/help\n/status\n/clear\n/quit\n\nNavigation:\n- Ctrl+G toggles selection mode for native terminal drag-to-select\n- Tab toggles composer/transcript focus\n- Up/Down moves transcript selection\n- PageUp/PageDown scroll the transcript\n- Home/End jump to the top or bottom\n- Left/Right collapses or expands a selected subagent\n- Enter/Space toggles a selected subagent\n- y copies the selected transcript item\n- Y copies the full transcript\n\nBuilt-in tools:\n- bash(command, cwd?)\n- prompt_cursor(prompt, cwd?)\n- subagent(prompt, cwd?, model?, mode?)\n- read_file(path, start_line?, line_count?)\n- edit_file(path, old_text, new_text, replace_all?)\n- write_file(path, content, append?, overwrite_existing?, create_parent_directories?)",
+                    "/help\n/status\n/clear\n/quit\n\nNavigation:\n- Ctrl+G toggles selection mode for native terminal drag-to-select\n- Tab toggles composer/transcript focus\n- Up/Down moves transcript selection\n- PageUp/PageDown scroll the transcript\n- Home/End jump to the top or bottom\n- Left/Right collapses or expands a selected subagent\n- Enter/Space toggles a selected subagent\n- y copies the selected transcript item\n- Y copies the full transcript\n\nLocal built-in tools:\n- bash(command, cwd?)\n- prompt_cursor(prompt, cwd?)\n- subagent(prompt, cwd?, model?, mode?)\n- read_file(path, start_line?, line_count?)\n- edit_file(path, old_text, new_text, replace_all?)\n- write_file(path, content, append?, overwrite_existing?, create_parent_directories?)\n\nRemote/server workflow:\n- Use `--server-url` or saved config to connect remotely\n- Use `--start-server` to launch a local Mirage server before opening the TUI",
                 ));
             }
             "/status" => {
+                let status = self.service.status_snapshot();
                 self.push_session_entry(TranscriptEntry::meta(
                     "Status",
                     format!(
-                        "model: {}\nauthority: {}\nbase path: {}\nmax turns: {}\nvenice system prompt: {}\nuser system prompt: {}\nhistory messages: {}\ncursor sessions: {}\nselection mode: {}\nfocus: {}",
-                        self.model,
-                        self.authority,
-                        self.base_path,
-                        self.max_turns,
-                        if self.uncensored { "enabled" } else { "disabled" },
-                        if self.system_prompt_configured { "configured" } else { "unset" },
-                        self.session.history.len(),
+                        "backend: {}\nmodel: {}\nauthority: {}\nbase path: {}\nmax turns: {}\nvenice system prompt: {}\nuser system prompt: {}\nhistory messages: {}\ncursor sessions: {}\nselection mode: {}\nfocus: {}",
+                        self.backend_description,
+                        status.model,
+                        status.authority,
+                        status.base_path,
+                        status.max_turns,
+                        if status.uncensored { "enabled" } else { "disabled" },
+                        if status.system_prompt_configured { "configured" } else { "unset" },
+                        status.history_messages,
                         self.cursor_sessions.len(),
                         if self.selection_mode { "enabled" } else { "disabled" },
                         match self.focus {
@@ -75,10 +62,7 @@ impl App {
             }
             "/clear" => {
                 self.cursor_sessions.clear();
-                self.session.clear_with_notice(
-                    "Conversation cleared, including Cursor session state.",
-                    "Cleared conversation history and Cursor session state.",
-                );
+                backend.clear_conversation(&mut self.service);
                 self.focus = FocusArea::Composer;
                 self.selection_mode = false;
                 self.selected_transcript = 0;

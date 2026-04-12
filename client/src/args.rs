@@ -41,4 +41,28 @@ pub(crate) struct Args {
     /// Override the API base path for testing.
     #[arg(long, default_value = "/api/v1")]
     pub(crate) base_path: String,
+
+    /// Connect to a Mirage server instead of running the local backend.
+    #[arg(long, env = "MIRAGE_SERVER_URL")]
+    pub(crate) server_url: Option<String>,
+
+    /// Admin API key for the Mirage server.
+    #[arg(long, env = "MIRAGE_ADMIN_API_KEY")]
+    pub(crate) admin_key: Option<String>,
+
+    /// Force the local backend even if a remote server is configured.
+    #[arg(long, default_value_t = false)]
+    pub(crate) local: bool,
+
+    /// Start a local Mirage server process before opening the TUI.
+    #[arg(long, default_value_t = false)]
+    pub(crate) start_server: bool,
+
+    /// Stop a configured Mirage server and exit.
+    #[arg(long, default_value_t = false)]
+    pub(crate) stop_server: bool,
+
+    /// Force-restart the local Mirage server before opening the TUI.
+    #[arg(long, default_value_t = false)]
+    pub(crate) restart_server: bool,
 }

@@ -1,10 +1,11 @@
 use crate::{agent::FinalResponse, completion::Usage, message::Message};
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
 
 const DEFAULT_WELCOME_BODY: &str = "Type a message below. Use /help for commands. Built-in tools: `bash`, `prompt_cursor`, `subagent`, `read_file`, `edit_file`, `write_file` (whole-file writes only).";
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TranscriptKind {
     Meta,
     User,
@@ -13,7 +14,7 @@ pub enum TranscriptKind {
     Error,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TranscriptEntry {
     pub kind: TranscriptKind,
     pub title: String,
@@ -74,7 +75,7 @@ impl TranscriptEntry {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TranscriptItem {
     Entry(TranscriptEntry),
     SubagentGroup(SubagentGroup),
@@ -103,14 +104,14 @@ impl TranscriptItem {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SubagentStatus {
     Running,
     Complete,
     Failed,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SubagentGroup {
     pub summary: String,
     pub status: SubagentStatus,
@@ -274,6 +275,22 @@ impl Session {
             )));
         self.streaming = false;
         self.status = status.into();
+    }
+
+    pub fn replace_remote_state(
+        &mut self,
+        transcript: Vec<TranscriptItem>,
+        status: impl Into<String>,
+        streaming: bool,
+    ) {
+        self.transcript = transcript;
+        self.status = status.into();
+        self.streaming = streaming;
+        self.usage = None;
+        self.history.clear();
+        self.pending_assistant = None;
+        self.pending_subagents.clear();
+        self.clear_active_tool_aggregates();
     }
 
     pub fn transcript_text(&self, index: usize) -> Option<String> {

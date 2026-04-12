@@ -1,26 +1,53 @@
-use super::{App, Args, FocusArea, TranscriptScrollMode};
-use crate::{app::helpers::copy_text_to_clipboard, tools::cursor_session::CursorSessionStore};
-use mirage_core::session::{TranscriptEntry, TranscriptItem};
+use super::{App, FocusArea, TranscriptScrollMode};
+use crate::app::helpers::copy_text_to_clipboard;
+#[cfg(test)]
+use crate::args::Args;
+use mirage_core::{
+    session::{TranscriptEntry, TranscriptItem},
+    tools::cursor_session::CursorSessionStore,
+};
+#[cfg(test)]
+use mirage_service::ServiceConfig;
+use mirage_service::SessionService;
 use std::sync::Arc;
 
 impl App {
+    #[cfg(test)]
     pub(crate) fn new(args: &Args, cursor_sessions: Arc<CursorSessionStore>) -> Self {
-        let session = mirage_core::session::Session::new(args.system_prompt.as_deref());
-        let input = args.prompt.clone().unwrap_or_default();
+        let service = SessionService::new(
+            ServiceConfig {
+                model: args.model.clone(),
+                max_turns: args.max_turns,
+                authority: args.authority.clone(),
+                base_path: args.base_path.clone(),
+                uncensored: args.uncensored,
+                system_prompt_configured: args.system_prompt.is_some(),
+            },
+            args.system_prompt.as_deref(),
+        );
+        Self::from_service(
+            service,
+            args.prompt.clone().unwrap_or_default(),
+            cursor_sessions,
+            "local".to_owned(),
+        )
+    }
+
+    pub(crate) fn from_service(
+        service: SessionService,
+        input: String,
+        cursor_sessions: Arc<CursorSessionStore>,
+        backend_description: String,
+    ) -> Self {
         let cursor = input.chars().count();
-        let selected_transcript = session.transcript.len().saturating_sub(1);
+        let selected_transcript = service.session().transcript.len().saturating_sub(1);
 
         Self {
-            session,
+            service,
+            backend_description,
             input,
             cursor,
             should_quit: false,
-            model: args.model.clone(),
-            max_turns: args.max_turns,
-            authority: args.authority.clone(),
-            base_path: args.base_path.clone(),
-            system_prompt_configured: args.system_prompt.is_some(),
-            uncensored: args.uncensored,
             selection_mode: false,
             focus: FocusArea::Composer,
             selected_transcript,
@@ -35,19 +62,17 @@ impl App {
     }
 
     pub(crate) fn can_submit(&self) -> bool {
-        matches!(self.focus, FocusArea::Composer)
-            && !self.session.streaming
-            && !self.input.trim().is_empty()
+        matches!(self.focus, FocusArea::Composer) && self.service.can_submit(&self.input)
     }
 
     pub(super) fn push_session_entry(&mut self, entry: TranscriptEntry) {
-        self.session.push_entry(entry);
+        self.service.session_mut().push_entry(entry);
         self.follow_transcript_tail_if_composing();
     }
 
     pub(super) fn follow_transcript_tail_if_composing(&mut self) {
         if matches!(self.focus, FocusArea::Composer) {
-            self.selected_transcript = self.session.transcript.len().saturating_sub(1);
+            self.selected_transcript = self.service.session().transcript.len().saturating_sub(1);
             self.transcript_scroll_mode = TranscriptScrollMode::FollowTail;
         }
     }
@@ -55,7 +80,7 @@ impl App {
     pub(super) fn clamp_selected_transcript(&mut self) {
         self.selected_transcript = self
             .selected_transcript
-            .min(self.session.transcript.len().saturating_sub(1));
+            .min(self.service.session().transcript.len().saturating_sub(1));
     }
 
     pub(super) fn toggle_focus(&mut self) {
@@ -68,7 +93,7 @@ impl App {
 
     pub(super) fn set_selection_mode(&mut self, enabled: bool) {
         self.selection_mode = enabled;
-        self.session.status = if enabled {
+        self.service.session_mut().status = if enabled {
             "Selection mode enabled. Drag with the mouse to select text; press Ctrl+G or Esc to return."
                 .to_owned()
         } else {
@@ -86,55 +111,67 @@ impl App {
     }
 
     pub(super) fn select_next_transcript_item(&mut self) {
-        self.selected_transcript =
-            (self.selected_transcript + 1).min(self.session.transcript.len().saturating_sub(1));
+        self.selected_transcript = (self.selected_transcript + 1)
+            .min(self.service.session().transcript.len().saturating_sub(1));
         self.transcript_scroll_mode = TranscriptScrollMode::FollowSelection;
     }
 
     pub(super) fn toggle_selected_subagent_group(&mut self) {
-        if let Some(TranscriptItem::SubagentGroup(group)) =
-            self.session.transcript.get_mut(self.selected_transcript)
+        if let Some(TranscriptItem::SubagentGroup(group)) = self
+            .service
+            .session_mut()
+            .transcript
+            .get_mut(self.selected_transcript)
         {
             group.expanded = !group.expanded;
         }
     }
 
     pub(super) fn expand_selected_subagent_group(&mut self) {
-        if let Some(TranscriptItem::SubagentGroup(group)) =
-            self.session.transcript.get_mut(self.selected_transcript)
+        if let Some(TranscriptItem::SubagentGroup(group)) = self
+            .service
+            .session_mut()
+            .transcript
+            .get_mut(self.selected_transcript)
         {
             group.expanded = true;
         }
     }
 
     pub(super) fn collapse_selected_subagent_group(&mut self) {
-        if let Some(TranscriptItem::SubagentGroup(group)) =
-            self.session.transcript.get_mut(self.selected_transcript)
+        if let Some(TranscriptItem::SubagentGroup(group)) = self
+            .service
+            .session_mut()
+            .transcript
+            .get_mut(self.selected_transcript)
         {
             group.expanded = false;
         }
     }
 
     pub(super) fn selected_transcript_text(&self) -> Option<String> {
-        self.session.transcript_text(self.selected_transcript)
+        self.service
+            .session()
+            .transcript_text(self.selected_transcript)
     }
 
     pub(super) fn full_transcript_text(&self) -> String {
-        self.session.full_transcript_text()
+        self.service.session().full_transcript_text()
     }
 
     pub(super) fn copy_selected_transcript_item(&mut self) {
         let Some(text) = self.selected_transcript_text() else {
-            self.session.status = "Nothing to copy.".to_owned();
+            self.service.session_mut().status = "Nothing to copy.".to_owned();
             return;
         };
 
         match copy_text_to_clipboard(&text) {
             Ok(()) => {
-                self.session.status = "Copied selected transcript item to clipboard.".to_owned();
+                self.service.session_mut().status =
+                    "Copied selected transcript item to clipboard.".to_owned();
             }
             Err(error) => {
-                self.session.status = format!("Clipboard copy failed: {error}");
+                self.service.session_mut().status = format!("Clipboard copy failed: {error}");
             }
         }
     }
@@ -142,16 +179,17 @@ impl App {
     pub(super) fn copy_full_transcript(&mut self) {
         let text = self.full_transcript_text();
         if text.trim().is_empty() {
-            self.session.status = "Nothing to copy.".to_owned();
+            self.service.session_mut().status = "Nothing to copy.".to_owned();
             return;
         }
 
         match copy_text_to_clipboard(&text) {
             Ok(()) => {
-                self.session.status = "Copied full transcript to clipboard.".to_owned();
+                self.service.session_mut().status =
+                    "Copied full transcript to clipboard.".to_owned();
             }
             Err(error) => {
-                self.session.status = format!("Clipboard copy failed: {error}");
+                self.service.session_mut().status = format!("Clipboard copy failed: {error}");
             }
         }
     }

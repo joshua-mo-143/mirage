@@ -87,11 +87,12 @@ fn render(frame: &mut Frame, app: &mut App) {
     .areas(area);
 
     let status_text = app
-        .session
+        .service
+        .session()
         .usage
         .map(|usage| format!("  {} in / {} out", usage.input_tokens, usage.output_tokens))
         .unwrap_or_default();
-    let mode_style = if app.session.streaming {
+    let mode_style = if app.service.session().streaming {
         Style::default().fg(Color::Yellow)
     } else {
         Style::default().fg(Color::DarkGray)
@@ -100,10 +101,10 @@ fn render(frame: &mut Frame, app: &mut App) {
         Line::from(vec![
             Span::styled("Mirage", Style::default().add_modifier(Modifier::BOLD)),
             Span::styled("  ", Style::default()),
-            Span::styled(app.model.clone(), Style::default().fg(Color::Cyan)),
+            Span::styled(app.service.model(), Style::default().fg(Color::Cyan)),
             Span::styled("  ", Style::default()),
             Span::styled(
-                if app.session.streaming {
+                if app.service.session().streaming {
                     "streaming"
                 } else {
                     "ready"
@@ -112,12 +113,12 @@ fn render(frame: &mut Frame, app: &mut App) {
             ),
             Span::styled("  ", Style::default()),
             Span::styled(
-                if app.uncensored {
+                if app.service.uncensored() {
                     "uncensored"
                 } else {
                     "guarded"
                 },
-                if app.uncensored {
+                if app.service.uncensored() {
                     Style::default().fg(Color::Yellow)
                 } else {
                     Style::default().fg(Color::DarkGray)
@@ -127,8 +128,9 @@ fn render(frame: &mut Frame, app: &mut App) {
         ]),
         Line::from(Span::styled(
             format!(
-                "{}  Focus: {}  Selection: {}",
-                app.session.status,
+                "{}  Backend: {}  Focus: {}  Selection: {}",
+                app.service.session().status,
+                app.backend_description,
                 match app.focus {
                     FocusArea::Composer => "composer",
                     FocusArea::Transcript => "transcript",
@@ -141,7 +143,7 @@ fn render(frame: &mut Frame, app: &mut App) {
     frame.render_widget(header, header_area);
 
     let rendered_transcript = build_transcript_lines(
-        &app.session.transcript,
+        &app.service.session().transcript,
         matches!(app.focus, FocusArea::Transcript)
             .then_some(app.selected_transcript)
             .filter(|_| matches!(app.focus, FocusArea::Transcript)),
@@ -180,11 +182,15 @@ fn render(frame: &mut Frame, app: &mut App) {
     )));
     frame.render_widget(divider, divider_area);
 
-    let composer_prompt = if app.session.streaming { "… " } else { "> " };
+    let composer_prompt = if app.service.session().streaming {
+        "… "
+    } else {
+        "> "
+    };
     let prompt_width = composer_prompt.chars().count() as u16;
     let composer_width = composer_area.width.saturating_sub(prompt_width);
     let (visible_input, cursor_offset) = app.input_view(composer_width);
-    let composer_text = if visible_input.is_empty() && !app.session.streaming {
+    let composer_text = if visible_input.is_empty() && !app.service.session().streaming {
         Line::from(vec![
             Span::styled(
                 composer_prompt,
@@ -218,7 +224,7 @@ fn render(frame: &mut Frame, app: &mut App) {
     )));
     frame.render_widget(footer, footer_area);
 
-    if !app.session.streaming && matches!(app.focus, FocusArea::Composer) {
+    if !app.service.session().streaming && matches!(app.focus, FocusArea::Composer) {
         let cursor_x = composer_area.x + prompt_width + cursor_offset;
         let cursor_y = composer_area.y;
         frame.set_cursor_position(Position::new(cursor_x, cursor_y));
