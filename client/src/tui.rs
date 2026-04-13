@@ -6,7 +6,7 @@ use crossterm::{
 use ratatui::{
     Frame, Terminal,
     backend::CrosstermBackend,
-    layout::{Constraint, Layout, Position, Rect},
+    layout::{Alignment, Constraint, Layout, Position, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span, Text as TuiText},
     widgets::{Paragraph, Wrap},
@@ -92,61 +92,70 @@ fn render(frame: &mut Frame, app: &mut App) {
     ])
     .areas(area);
 
-    let status_text = app
+    let [header_top_area, header_bottom_area] =
+        Layout::vertical([Constraint::Length(1), Constraint::Length(1)]).areas(header_area);
+    let [header_top_left_area, header_top_right_area] =
+        Layout::horizontal([Constraint::Min(1), Constraint::Length(12)]).areas(header_top_area);
+    let [header_bottom_left_area, header_bottom_right_area] =
+        Layout::horizontal([Constraint::Min(1), Constraint::Length(18)]).areas(header_bottom_area);
+
+    let header_top_left = Paragraph::new(Line::from(vec![
+        Span::styled("Mirage", Style::default().add_modifier(Modifier::BOLD)),
+        Span::raw("  "),
+        Span::styled(
+            app.service.model().to_owned(),
+            Style::default().fg(Color::Cyan),
+        ),
+        Span::raw("  "),
+        Span::styled(
+            truncate_for_width(
+                &format!("Backend: {}", app.backend_description),
+                header_top_left_area.width.saturating_sub(2),
+            ),
+            Style::default().fg(Color::Gray),
+        ),
+    ]));
+    frame.render_widget(header_top_left, header_top_left_area);
+
+    let header_top_right = Paragraph::new(Line::from(Span::styled(
+        if app.service.uncensored() {
+            "uncensored"
+        } else {
+            "guarded"
+        },
+        if app.service.uncensored() {
+            Style::default().fg(Color::Yellow)
+        } else {
+            Style::default().fg(Color::DarkGray)
+        },
+    )))
+    .alignment(Alignment::Right);
+    frame.render_widget(header_top_right, header_top_right_area);
+
+    let header_bottom_left = Paragraph::new(Line::from(Span::styled(
+        truncate_for_width(&app.service.session().status, header_bottom_left_area.width),
+        Style::default().fg(Color::Gray),
+    )));
+    frame.render_widget(header_bottom_left, header_bottom_left_area);
+
+    let usage_text = app
         .service
         .session()
         .usage
-        .map(|usage| format!("  {} in / {} out", usage.input_tokens, usage.output_tokens))
-        .unwrap_or_default();
-    let mode_style = if app.service.session().streaming {
-        Style::default().fg(Color::Yellow)
-    } else {
-        Style::default().fg(Color::DarkGray)
-    };
-    let header = Paragraph::new(TuiText::from(vec![
-        Line::from(vec![
-            Span::styled("Mirage", Style::default().add_modifier(Modifier::BOLD)),
-            Span::styled("  ", Style::default()),
-            Span::styled(app.service.model(), Style::default().fg(Color::Cyan)),
-            Span::styled("  ", Style::default()),
-            Span::styled(
-                if app.service.session().streaming {
-                    "streaming"
-                } else {
-                    "ready"
-                },
-                mode_style,
-            ),
-            Span::styled("  ", Style::default()),
-            Span::styled(
-                if app.service.uncensored() {
-                    "uncensored"
-                } else {
-                    "guarded"
-                },
-                if app.service.uncensored() {
-                    Style::default().fg(Color::Yellow)
-                } else {
-                    Style::default().fg(Color::DarkGray)
-                },
-            ),
-            Span::raw(status_text),
-        ]),
-        Line::from(Span::styled(
+        .map(|usage| {
             format!(
-                "{}  Backend: {}  Focus: {}  Selection: {}",
-                app.service.session().status,
-                app.backend_description,
-                match app.focus {
-                    FocusArea::Composer => "composer",
-                    FocusArea::Transcript => "transcript",
-                },
-                if app.selection_mode { "on" } else { "off" }
-            ),
-            Style::default().fg(Color::Gray),
-        )),
-    ]));
-    frame.render_widget(header, header_area);
+                "{} in / {} out",
+                format_token_count(usage.input_tokens),
+                format_token_count(usage.output_tokens)
+            )
+        })
+        .unwrap_or_default();
+    let header_bottom_right = Paragraph::new(Line::from(Span::styled(
+        truncate_for_width(&usage_text, header_bottom_right_area.width),
+        Style::default().fg(Color::DarkGray),
+    )))
+    .alignment(Alignment::Right);
+    frame.render_widget(header_bottom_right, header_bottom_right_area);
 
     let rendered_transcript = build_transcript_lines(
         &app.service.session().transcript,
@@ -252,4 +261,32 @@ fn centered_content_area(area: Rect) -> Rect {
         area.width.saturating_sub(horizontal_margin * 2),
         area.height.saturating_sub(vertical_margin * 2),
     )
+}
+
+/// Truncates text so it fits within a single visual row.
+fn truncate_for_width(value: &str, width: u16) -> String {
+    let width = width as usize;
+    if width == 0 {
+        return String::new();
+    }
+    let char_count = value.chars().count();
+    if char_count <= width {
+        return value.to_owned();
+    }
+    if width == 1 {
+        return ".".to_owned();
+    }
+    let kept = value.chars().take(width - 1).collect::<String>();
+    format!("{kept}.")
+}
+
+/// Formats token counts compactly so the header stays visually stable.
+fn format_token_count(value: u64) -> String {
+    match value {
+        0..=999 => value.to_string(),
+        1_000..=9_999 => format!("{:.1}k", value as f64 / 1_000.0),
+        10_000..=999_999 => format!("{}k", value / 1_000),
+        1_000_000..=9_999_999 => format!("{:.1}m", value as f64 / 1_000_000.0),
+        _ => format!("{}m", value / 1_000_000),
+    }
 }

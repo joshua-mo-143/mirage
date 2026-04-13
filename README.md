@@ -49,6 +49,20 @@ export VENICE_API_KEY="your-key-here"
 cargo run 
 ```
 
+For day-to-day operation, remote mode, runtime identity/personality, uncensoring, TUI commands, and Telegram setup, see [`USAGE.md`](./USAGE.md).
+
+## Configuration
+
+Mirage has a built-in identity as an autonomous assistant. You can optionally give it a runtime personality of its own.
+
+Personality is resolved in this order:
+
+1. `MIRAGE_PERSONALITY`
+2. `MIRAGE_PERSONALITY_FILE`
+3. `~/.config/mirage/PERSONALITY.md` or `$XDG_CONFIG_HOME/mirage/PERSONALITY.md`
+
+Mirage's own runtime instructions are resolved from `MIRAGE_SYSTEM_PROMPT`, with `VENICE_SYSTEM_PROMPT` still accepted as a compatibility fallback. They are runtime-owned configuration, not something passed or overridden per request.
+
 ## Why?
 Mirage is my attempt at an autonomous assistant that can live inside a real technical workflow instead of sitting beside it.
 

@@ -258,19 +258,12 @@ pub struct Session {
 }
 
 impl Session {
-    /// Creates a new session with the default welcome message and optional system prompt notice.
-    pub fn new(system_prompt: Option<&str>) -> Self {
-        let mut transcript = vec![TranscriptItem::Entry(TranscriptEntry::meta(
+    /// Creates a new session with the default welcome message.
+    pub fn new() -> Self {
+        let transcript = vec![TranscriptItem::Entry(TranscriptEntry::meta(
             "Mirage",
             DEFAULT_WELCOME_BODY,
         ))];
-
-        if let Some(system_prompt) = system_prompt {
-            transcript.push(TranscriptItem::Entry(TranscriptEntry::meta(
-                "System Prompt",
-                truncate_text(system_prompt, 160),
-            )));
-        }
 
         Self {
             transcript,
@@ -878,7 +871,7 @@ mod tests {
 
     /// Creates a session configured to accept streamed events for reducer-focused tests.
     fn streaming_session() -> Session {
-        let mut session = Session::new(None);
+        let mut session = Session::new();
         session.push_entry(super::TranscriptEntry::user("hello"));
         session.streaming = true;
         session
@@ -1244,7 +1237,7 @@ mod tests {
 
         let persisted = session.persisted_state();
 
-        let mut restored = Session::new(None);
+        let mut restored = Session::new();
         restored.replace_persisted_state(SessionPersistedState {
             transcript: persisted.transcript,
             history: persisted.history,

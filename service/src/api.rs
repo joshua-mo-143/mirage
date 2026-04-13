@@ -4,9 +4,7 @@ use serde::{Deserialize, Serialize};
 /// Request body used to create a new server-side session.
 #[allow(missing_docs)]
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
-pub struct CreateSessionRequest {
-    pub system_prompt: Option<String>,
-}
+pub struct CreateSessionRequest {}
 
 /// Request body used to submit a prompt to an existing session.
 #[allow(missing_docs)]

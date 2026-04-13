@@ -8,6 +8,8 @@ use futures::StreamExt;
 use mirage_core::{
     VeniceAgent, VeniceClient, VeniceConfig,
     debug_stream::StreamDebugLogger,
+    personality::load_runtime_personality,
+    prompts::{build_mirage_preamble, has_custom_prompt_configuration, resolve_system_prompt},
     session::{StreamEvent, SubagentProgressEvent},
     skills::ResolvedSkill,
     tools::{
@@ -177,15 +179,25 @@ pub(crate) async fn build_backend(
 ) -> Result<(SessionService, ClientBackend), Box<dyn Error>> {
     if let Some(remote) = remote {
         let (service, backend) =
-            RemoteBackend::connect(args, remote, resume_remote_session_id, tx).await?;
+            RemoteBackend::connect(remote, resume_remote_session_id, tx).await?;
         return Ok((service, ClientBackend::Remote(backend)));
     }
 
-    let service = SessionService::new(
-        service_config_from_args(args),
-        args.system_prompt.as_deref(),
-    );
-    let backend = LocalBackend::new(args, cursor_sessions, tx)?;
+    let runtime_system_prompt = resolve_system_prompt();
+    let runtime_personality =
+        load_runtime_personality().map_err(|error| -> Box<dyn Error> { error.into() })?;
+    let service = SessionService::new(service_config_from_args(
+        args,
+        runtime_system_prompt.as_deref(),
+        runtime_personality.as_deref(),
+    ));
+    let backend = LocalBackend::new(
+        args,
+        cursor_sessions,
+        tx,
+        runtime_system_prompt,
+        runtime_personality,
+    )?;
     Ok((service, ClientBackend::Local(backend)))
 }
 
@@ -328,6 +340,8 @@ impl LocalBackend {
         args: &Args,
         cursor_sessions: Arc<CursorSessionStore>,
         tx: mpsc::UnboundedSender<BackendEvent>,
+        runtime_system_prompt: Option<String>,
+        runtime_personality: Option<String>,
     ) -> Result<Self, Box<dyn Error>> {
         let debug_logger = StreamDebugLogger::from_optional_path_or_env(
             "MIRAGE_DEBUG_STREAM_LOG",
@@ -337,31 +351,20 @@ impl LocalBackend {
             .with_authority(args.authority.clone())
             .with_base_path(args.base_path.clone());
         let client = VeniceClient::new(config)?;
+        let mirage_preamble = build_mirage_preamble(
+            runtime_system_prompt.as_deref(),
+            runtime_personality.as_deref(),
+        );
         let mut agent_builder = client
             .agent(args.model.clone())
-            .default_max_turns(args.max_turns);
+            .default_max_turns(args.max_turns)
+            .preamble(&mirage_preamble);
 
         agent_builder = agent_builder.additional_params(serde_json::json!({
             "venice_parameters": {
                 "include_venice_system_prompt": args.uncensored
             }
         }));
-
-        if let Some(system_prompt) = args.system_prompt.as_deref() {
-            agent_builder = agent_builder.preamble(system_prompt);
-        }
-
-        agent_builder = agent_builder.append_preamble(
-            "Tool usage guidance:
-- Prefer discovering capabilities by using `bash` instead of assuming what commands, binaries, files, or directories are available.
-- Use `bash` freely for arbitrary shell commands, environment inspection, and capability discovery.
-- Use `playwright` for headless browser automation when a task needs webpage interaction, form filling, visible text extraction, or screenshots.
-- Prefer `subagent` for longer tasks that will require reading files, exploring code, or taking multiple tool-calling turns; use it to delegate deeper investigation or planning to a child Cursor agent and incorporate its final answer.
-- Use `read_file` to inspect files before editing them when needed.
-- Prefer `edit_file` for modifying part of an existing file.
-- Use `write_file` only when creating a new file, replacing an entire file, or appending whole-file content intentionally.
-- Use `prompt_cursor` when you want the local Cursor agent CLI (`agent -p`) to answer or inspect something.",
-        );
 
         if let Some(temperature) = args.temperature {
             agent_builder = agent_builder.temperature(f64::from(temperature));
@@ -434,7 +437,6 @@ pub(crate) struct RemoteBackend {
     http_client: reqwest::Client,
     server_url: String,
     admin_api_key: String,
-    system_prompt: Option<String>,
     session_state: Arc<Mutex<RemoteSessionState>>,
     tx: mpsc::UnboundedSender<BackendEvent>,
 }
@@ -448,13 +450,11 @@ struct RemoteSessionState {
 impl RemoteBackend {
     /// Connects to a remote Mirage server and creates the initial session.
     async fn connect(
-        args: &Args,
         remote: RemoteServerConfig,
         resume_remote_session_id: Option<String>,
         tx: mpsc::UnboundedSender<BackendEvent>,
     ) -> Result<(SessionService, Self), Box<dyn Error>> {
         let http_client = reqwest::Client::new();
-        let system_prompt = args.system_prompt.clone();
         let snapshot = match resume_remote_session_id {
             Some(session_id) => {
                 fetch_remote_session(
@@ -465,16 +465,15 @@ impl RemoteBackend {
                 )
                 .await?
             }
-            None => create_remote_session(&http_client, &remote, system_prompt.clone()).await?,
+            None => create_remote_session(&http_client, &remote).await?,
         };
-        let mut service = SessionService::new(service_config_from_snapshot(&snapshot), None);
+        let mut service = SessionService::new(service_config_from_snapshot(&snapshot));
         service.apply_remote_snapshot(snapshot.clone());
 
         let backend = Self {
             http_client,
             server_url: remote.server_url,
             admin_api_key: remote.admin_api_key,
-            system_prompt,
             session_state: Arc::new(Mutex::new(RemoteSessionState {
                 session_id: snapshot.id.clone(),
                 events_task: None,
@@ -577,7 +576,6 @@ impl RemoteBackend {
         let http_client = self.http_client.clone();
         let server_url = self.server_url.clone();
         let admin_api_key = self.admin_api_key.clone();
-        let system_prompt = self.system_prompt.clone();
         let session_state = Arc::clone(&self.session_state);
         let tx = self.tx.clone();
 
@@ -587,7 +585,7 @@ impl RemoteBackend {
                 admin_api_key: admin_api_key.clone(),
             };
 
-            match create_remote_session(&http_client, &remote, system_prompt).await {
+            match create_remote_session(&http_client, &remote).await {
                 Ok(snapshot) => {
                     if let Err(error) = replace_remote_session(
                         &http_client,
@@ -627,14 +625,21 @@ impl RemoteBackend {
 }
 
 /// Builds a service configuration from local client arguments.
-fn service_config_from_args(args: &Args) -> ServiceConfig {
+fn service_config_from_args(
+    args: &Args,
+    runtime_system_prompt: Option<&str>,
+    runtime_personality: Option<&str>,
+) -> ServiceConfig {
     ServiceConfig {
         model: args.model.clone(),
         max_turns: args.max_turns,
         authority: args.authority.clone(),
         base_path: args.base_path.clone(),
         uncensored: args.uncensored,
-        system_prompt_configured: args.system_prompt.is_some(),
+        system_prompt_configured: has_custom_prompt_configuration(
+            runtime_system_prompt,
+            runtime_personality,
+        ),
     }
 }
 
@@ -654,12 +659,11 @@ fn service_config_from_snapshot(snapshot: &SessionSnapshot) -> ServiceConfig {
 async fn create_remote_session(
     http_client: &reqwest::Client,
     remote: &RemoteServerConfig,
-    system_prompt: Option<String>,
 ) -> Result<SessionSnapshot, String> {
     let response = http_client
         .post(api_url(&remote.server_url, "/sessions"))
         .bearer_auth(&remote.admin_api_key)
-        .json(&CreateSessionRequest { system_prompt })
+        .json(&CreateSessionRequest {})
         .send()
         .await
         .map_err(|error| format!("failed to create remote session: {error}"))?;

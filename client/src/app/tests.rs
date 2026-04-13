@@ -16,7 +16,6 @@ fn test_args() -> Args {
     Args {
         prompt: None,
         model: "test-model".to_owned(),
-        system_prompt: None,
         temperature: None,
         max_completion_tokens: None,
         uncensored: false,

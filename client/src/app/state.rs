@@ -2,10 +2,7 @@ use super::{App, FocusArea, TranscriptScrollMode};
 use crate::app::helpers::copy_text_to_clipboard;
 #[cfg(test)]
 use crate::args::Args;
-use mirage_core::{
-    session::{TranscriptEntry, TranscriptItem},
-    tools::cursor_session::CursorSessionStore,
-};
+use mirage_core::{session::{TranscriptEntry, TranscriptItem}, tools::cursor_session::CursorSessionStore};
 #[cfg(test)]
 use mirage_service::ServiceConfig;
 use mirage_service::SessionService;
@@ -15,17 +12,14 @@ impl App {
     #[cfg(test)]
     /// Creates a test-oriented app instance directly from command-line arguments.
     pub(crate) fn new(args: &Args, cursor_sessions: Arc<CursorSessionStore>) -> Self {
-        let service = SessionService::new(
-            ServiceConfig {
-                model: args.model.clone(),
-                max_turns: args.max_turns,
-                authority: args.authority.clone(),
-                base_path: args.base_path.clone(),
-                uncensored: args.uncensored,
-                system_prompt_configured: args.system_prompt.is_some(),
-            },
-            args.system_prompt.as_deref(),
-        );
+        let service = SessionService::new(ServiceConfig {
+            model: args.model.clone(),
+            max_turns: args.max_turns,
+            authority: args.authority.clone(),
+            base_path: args.base_path.clone(),
+            uncensored: args.uncensored,
+            system_prompt_configured: false,
+        });
         Self::from_service(
             service,
             args.prompt.clone().unwrap_or_default(),

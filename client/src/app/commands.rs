@@ -55,28 +55,7 @@ impl App {
                 ));
             }
             "/status" => {
-                let status = self.service.status_snapshot();
-                self.push_session_entry(TranscriptEntry::meta(
-                    "Status",
-                    format!(
-                        "backend: {}\nmodel: {}\nauthority: {}\nbase path: {}\nmax turns: {}\nvenice system prompt: {}\nuser system prompt: {}\nhistory messages: {}\ncursor sessions: {}\nactive skill: {}\nselection mode: {}\nfocus: {}",
-                        self.backend_description,
-                        status.model,
-                        status.authority,
-                        status.base_path,
-                        status.max_turns,
-                        if status.uncensored { "enabled" } else { "disabled" },
-                        if status.system_prompt_configured { "configured" } else { "unset" },
-                        status.history_messages,
-                        self.cursor_sessions.len(),
-                        self.active_skill_name().unwrap_or("none"),
-                        if self.selection_mode { "enabled" } else { "disabled" },
-                        match self.focus {
-                            FocusArea::Composer => "composer",
-                            FocusArea::Transcript => "transcript",
-                        }
-                    ),
-                ));
+                self.push_session_entry(TranscriptEntry::meta("Status", self.status_message()));
             }
             "/clear" => {
                 self.cursor_sessions.clear();
@@ -178,5 +157,67 @@ impl App {
                 )));
             }
         }
+    }
+
+    /// Builds the chat-visible `/status` body.
+    fn status_message(&self) -> String {
+        let status = self.service.status_snapshot();
+        format!(
+            "backend: {}\nmodel: {}\nauthority: {}\nbase path: {}\nmax turns: {}\nuncensored: {}\nruntime prompt/personality: {}\nhistory messages: {}\ncursor sessions: {}\nactive skill: {}\nselection mode: {}\nfocus: {}",
+            self.backend_description,
+            status.model,
+            status.authority,
+            status.base_path,
+            status.max_turns,
+            if status.uncensored { "enabled" } else { "disabled" },
+            if status.system_prompt_configured { "configured" } else { "unset" },
+            status.history_messages,
+            self.cursor_sessions.len(),
+            self.active_skill_name().unwrap_or("none"),
+            if self.selection_mode { "enabled" } else { "disabled" },
+            match self.focus {
+                FocusArea::Composer => "composer",
+                FocusArea::Transcript => "transcript",
+            }
+        )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::App;
+    use crate::args::Args;
+    use mirage_core::tools::cursor_session::CursorSessionStore;
+    use std::sync::Arc;
+
+    fn test_args() -> Args {
+        Args {
+            prompt: None,
+            model: "test-model".to_owned(),
+            temperature: None,
+            max_completion_tokens: None,
+            uncensored: true,
+            max_turns: 8,
+            authority: "api.venice.ai".to_owned(),
+            base_path: "/api/v1".to_owned(),
+            server_url: None,
+            admin_key: None,
+            local: false,
+            start_server: false,
+            stop_server: false,
+            restart_server: false,
+            resume_last: false,
+            debug_stream_log: None,
+            run_server: false,
+        }
+    }
+
+    #[test]
+    fn status_message_reports_uncensored_flag() {
+        let app = App::new(&test_args(), Arc::new(CursorSessionStore::default()));
+        let status = app.status_message();
+
+        assert!(status.contains("uncensored: enabled"));
+        assert!(status.contains("runtime prompt/personality: unset"));
     }
 }

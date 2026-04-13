@@ -7,6 +7,10 @@
 
 /// Shared JSONL stream-debug logging utilities.
 pub mod debug_stream;
+/// Runtime personality loading helpers.
+pub mod personality;
+/// Shared Mirage preamble and prompt composition helpers.
+pub mod prompts;
 /// Reducer-backed session state and transcript modeling.
 pub mod session;
 /// Request-scoped skill loading, matching, and prompt assembly helpers.

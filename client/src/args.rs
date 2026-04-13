@@ -15,10 +15,6 @@ pub(crate) struct Args {
     )]
     pub(crate) model: String,
 
-    /// Optional system prompt prepended to the chat history.
-    #[arg(long, env = "VENICE_SYSTEM_PROMPT")]
-    pub(crate) system_prompt: Option<String>,
-
     /// Optional sampling temperature.
     #[arg(long)]
     pub(crate) temperature: Option<f32>,

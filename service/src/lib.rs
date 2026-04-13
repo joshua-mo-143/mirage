@@ -68,9 +68,9 @@ pub struct SessionService {
 
 impl SessionService {
     /// Creates a new service with a fresh reducer-backed session.
-    pub fn new(config: ServiceConfig, system_prompt: Option<&str>) -> Self {
+    pub fn new(config: ServiceConfig) -> Self {
         Self {
-            session: Session::new(system_prompt),
+            session: Session::new(),
             config,
             history_messages_override: None,
         }
@@ -409,7 +409,7 @@ mod tests {
     /// Verifies that submitting a prompt returns an execution payload and updates reducer state.
     #[test]
     fn submit_prompt_returns_request_and_updates_session() {
-        let mut service = SessionService::new(config(), None);
+        let mut service = SessionService::new(config());
 
         let request = service.submit_prompt("hello".to_owned(), Vec::new());
 
@@ -434,7 +434,7 @@ mod tests {
     /// Verifies that status snapshots reflect the configured settings and current history count.
     #[test]
     fn status_snapshot_reflects_configuration_and_history_count() {
-        let mut service = SessionService::new(config(), None);
+        let mut service = SessionService::new(config());
         service.submit_prompt("hello".to_owned(), Vec::new());
 
         let snapshot = service.status_snapshot();
@@ -447,7 +447,7 @@ mod tests {
     /// Verifies that applying a remote snapshot replaces local transcript and status state.
     #[test]
     fn apply_remote_snapshot_replaces_transcript_and_status() {
-        let mut service = SessionService::new(config(), None);
+        let mut service = SessionService::new(config());
         service.apply_remote_snapshot(SessionSnapshot {
             id: "session-1".to_owned(),
             model: "remote-model".to_owned(),
@@ -480,7 +480,7 @@ mod tests {
     /// Verifies that oversized histories are compacted into a summary plus recent verbatim turns.
     #[test]
     fn submit_prompt_compacts_oversized_history() {
-        let mut service = SessionService::new(config(), None);
+        let mut service = SessionService::new(config());
         let chunk = "abcd".repeat(2_500);
         let mut history = Vec::new();
         for index in 0..20 {
@@ -506,7 +506,7 @@ mod tests {
     /// Verifies that small histories pass through unchanged.
     #[test]
     fn submit_prompt_keeps_small_history_verbatim() {
-        let mut service = SessionService::new(config(), None);
+        let mut service = SessionService::new(config());
         service.session_mut().history = vec![
             Message::system("Keep answers concise."),
             Message::user("hello"),

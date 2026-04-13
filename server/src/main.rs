@@ -17,6 +17,8 @@ use mirage_core::{
     VeniceClient, VeniceConfig,
     agent::{MultiTurnStreamItem, Text},
     debug_stream::StreamDebugLogger,
+    personality::load_runtime_personality,
+    prompts::{build_mirage_preamble, has_custom_prompt_configuration, resolve_system_prompt},
     session::{StreamEvent, TranscriptItem, TranscriptKind, summarize_tool_call},
     skills::ResolvedSkill,
     streaming::{StreamedAssistantContent, StreamedUserContent, StreamingPrompt},
@@ -60,6 +62,7 @@ struct ServerConfig {
     admin_api_key: String,
     service: ServiceConfig,
     system_prompt: Option<String>,
+    personality: Option<String>,
     telegram: TelegramConfig,
 }
 
@@ -76,7 +79,13 @@ impl ServerConfig {
         })?;
         let model =
             env::var("VENICE_MODEL").unwrap_or_else(|_| "arcee-trinity-large-thinking".to_owned());
-        let system_prompt = env::var("VENICE_SYSTEM_PROMPT").ok();
+        let system_prompt = resolve_system_prompt();
+        let personality = load_runtime_personality().map_err(|error| {
+            ApiError::new(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("failed to load Mirage personality: {error}"),
+            )
+        })?;
         let uncensored = env::var("MIRAGE_UNCENSORED")
             .ok()
             .as_deref()
@@ -112,9 +121,13 @@ impl ServerConfig {
                 authority,
                 base_path,
                 uncensored,
-                system_prompt_configured: system_prompt.is_some(),
+                system_prompt_configured: has_custom_prompt_configuration(
+                    system_prompt.as_deref(),
+                    personality.as_deref(),
+                ),
             },
             system_prompt,
+            personality,
             telegram: TelegramConfig {
                 bot_token: env::var("TELEGRAM_BOT_TOKEN").ok(),
                 default_chat_id,
@@ -139,6 +152,7 @@ struct ServerState {
     venice_client: VeniceClient,
     base_service_config: ServiceConfig,
     default_system_prompt: Option<String>,
+    default_personality: Option<String>,
     sessions: Arc<RwLock<HashMap<String, Arc<SessionRuntime>>>>,
     scheduler: Arc<SchedulerState>,
     http_client: reqwest::Client,
@@ -152,7 +166,7 @@ struct ServerState {
 /// Runtime state associated with a single in-memory session.
 struct SessionRuntime {
     service: Mutex<SessionService>,
-    system_prompt: Option<String>,
+    agent_preamble: String,
     events_tx: broadcast::Sender<SessionSnapshot>,
 }
 
@@ -271,6 +285,7 @@ pub async fn run() -> Result<(), Box<dyn Error>> {
         venice_client,
         base_service_config: server_config.service,
         default_system_prompt: server_config.system_prompt,
+        default_personality: server_config.personality,
         sessions: Arc::new(RwLock::new(HashMap::new())),
         scheduler: Arc::new(SchedulerState::default()),
         http_client: reqwest::Client::new(),
@@ -347,15 +362,10 @@ async fn shutdown(
 async fn create_session(
     State(state): State<Arc<ServerState>>,
     headers: HeaderMap,
-    payload: Option<Json<CreateSessionRequest>>,
+    _payload: Option<Json<CreateSessionRequest>>,
 ) -> ApiResult<SessionSnapshot> {
     require_admin(&state, &headers)?;
-
-    let request = payload.map(|json| json.0).unwrap_or_default();
-    let system_prompt = request
-        .system_prompt
-        .or_else(|| state.default_system_prompt.clone());
-    let (_, _, snapshot) = create_runtime(&state, system_prompt).await;
+    let (_, _, snapshot) = create_runtime(&state).await;
     Ok(Json(snapshot))
 }
 
@@ -699,7 +709,7 @@ async fn run_prompt(
         &model,
         uncensored,
         max_turns,
-        runtime.system_prompt.as_deref(),
+        &runtime.agent_preamble,
         subagent_tx,
     );
     let mut stream = agent
@@ -807,32 +817,18 @@ fn build_agent(
     model: &str,
     uncensored: bool,
     max_turns: usize,
-    system_prompt: Option<&str>,
+    agent_preamble: &str,
     subagent_tx: mpsc::UnboundedSender<mirage_core::session::SubagentProgressEvent>,
 ) -> mirage_core::VeniceAgent {
-    let mut agent_builder = venice_client
+    let agent_builder = venice_client
         .agent(model.to_owned())
         .default_max_turns(max_turns)
+        .preamble(agent_preamble)
         .additional_params(serde_json::json!({
             "venice_parameters": {
                 "include_venice_system_prompt": uncensored
             }
-        }))
-        .append_preamble(
-            "Tool usage guidance:
-- Prefer discovering capabilities by using `bash` instead of assuming what commands, binaries, files, or directories are available.
-- Use `bash` freely for arbitrary shell commands, environment inspection, and capability discovery.
-- Use `playwright` for headless browser automation when a task needs webpage interaction, form filling, visible text extraction, or screenshots.
-- Prefer `subagent` for longer tasks that will require reading files, exploring code, or taking multiple tool-calling turns; use it to delegate deeper investigation or planning to a child Cursor agent and incorporate its final answer.
-- Use `read_file` to inspect files before editing them when needed.
-- Prefer `edit_file` for modifying part of an existing file.
-- Use `write_file` only when creating a new file, replacing an entire file, or appending whole-file content intentionally.
-- Use `prompt_cursor` when you want the local Cursor agent CLI (`agent -p`) to answer or inspect something.",
-        );
-
-    if let Some(system_prompt) = system_prompt {
-        agent_builder = agent_builder.preamble(system_prompt);
-    }
+        }));
 
     agent_builder
         .tool(BashTool)
@@ -1104,7 +1100,7 @@ async fn create_or_replace_telegram_session(
     state: &ServerState,
     chat_id: &str,
 ) -> Result<(String, Arc<SessionRuntime>), ApiError> {
-    let (session_id, runtime, _) = create_runtime(state, state.default_system_prompt.clone()).await;
+    let (session_id, runtime, _) = create_runtime(state).await;
     state
         .telegram_sessions
         .lock()
@@ -1130,17 +1126,20 @@ async fn get_session_runtime(
 /// Creates and stores a new session runtime, returning its id, runtime, and initial snapshot.
 async fn create_runtime(
     state: &ServerState,
-    system_prompt: Option<String>,
 ) -> (String, Arc<SessionRuntime>, SessionSnapshot) {
     let session_id = Uuid::new_v4().to_string();
+    let system_prompt = state.default_system_prompt.clone();
+    let personality = state.default_personality.clone();
     let mut config = state.base_service_config.clone();
-    config.system_prompt_configured = system_prompt.is_some();
-    let service = SessionService::new(config, system_prompt.as_deref());
+    config.system_prompt_configured =
+        has_custom_prompt_configuration(system_prompt.as_deref(), personality.as_deref());
+    let agent_preamble = build_mirage_preamble(system_prompt.as_deref(), personality.as_deref());
+    let service = SessionService::new(config);
     let snapshot = snapshot_from_service(&session_id, &service);
     let (events_tx, _) = broadcast::channel(128);
     let runtime = Arc::new(SessionRuntime {
         service: Mutex::new(service),
-        system_prompt,
+        agent_preamble,
         events_tx,
     });
 
