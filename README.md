@@ -7,6 +7,8 @@ By default, Mirage uses [Venice AI](https://venice.ai) for inference. Venice hos
 > [!WARNING]
 > This repository is extremely unstable. Use at your own risk. Additionally, the code contained in this repository is generated primarily with LLMs.
 
+![Mirage in action](img/screenshot.png)
+
 ## Features
 - Run locally or as a server deployment
 - Talk to Mirage from the terminal (through TUI) or Telegram
