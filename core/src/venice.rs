@@ -42,6 +42,7 @@ impl fmt::Debug for VeniceApiKey {
 }
 
 /// Provider configuration independent from the transport implementation.
+#[allow(missing_docs)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VeniceConfig {
     pub authority: String,
@@ -101,6 +102,7 @@ impl VeniceConfig {
 }
 
 /// Errors while constructing Venice configuration.
+#[allow(missing_docs)]
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum VeniceConfigError {
     #[error("VENICE_API_KEY is not set")]
@@ -108,6 +110,7 @@ pub enum VeniceConfigError {
 }
 
 /// Errors while talking to the Venice chat completions API.
+#[allow(missing_docs)]
 #[derive(Debug, Error)]
 pub enum VeniceError {
     #[error(transparent)]

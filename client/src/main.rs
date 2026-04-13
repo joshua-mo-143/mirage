@@ -1,3 +1,6 @@
+//! Interactive Mirage terminal client and local runtime bootstrap flow.
+#![warn(missing_docs)]
+
 mod app;
 mod args;
 mod backend;
@@ -176,10 +179,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let mut tui = Tui::new()?;
     let mut events = EventStream::new();
 
-    if app.can_submit() {
-        if app.process_enter(&mut backend) {
-            persist_last_session(&backend, &app).await;
-        }
+    if app.can_submit() && app.process_enter(&mut backend) {
+        persist_last_session(&backend, &app).await;
     }
 
     while !app.should_quit {

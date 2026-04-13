@@ -1,3 +1,6 @@
+//! Mirage HTTP server, SSE transport, scheduler, and Telegram bot entrypoint.
+#![warn(missing_docs)]
+
 use async_stream::stream;
 use axum::{
     Json, Router,

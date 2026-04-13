@@ -7,6 +7,7 @@ use std::{
 use thiserror::Error;
 
 /// Request-scoped skill content selected for a single prompt execution.
+#[allow(missing_docs)]
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ResolvedSkill {
     pub name: String,
@@ -14,6 +15,7 @@ pub struct ResolvedSkill {
 }
 
 /// Parsed skill metadata loaded from a Markdown skill file.
+#[allow(missing_docs)]
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub struct SkillMetadata {
     pub name: String,
@@ -28,6 +30,7 @@ pub struct SkillMetadata {
 }
 
 /// Fully parsed skill loaded from disk.
+#[allow(missing_docs)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Skill {
     pub metadata: SkillMetadata,
@@ -61,6 +64,7 @@ impl Skill {
 }
 
 /// Errors that can occur while discovering or parsing skills from disk.
+#[allow(missing_docs)]
 #[derive(Debug, Error)]
 pub enum SkillStoreError {
     #[error("unable to determine Mirage config directory for skills")]

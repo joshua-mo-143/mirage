@@ -29,6 +29,11 @@ impl CursorSessionStore {
             .unwrap_or(0)
     }
 
+    /// Returns whether the store currently contains no cached workspace mappings.
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
     /// Returns an existing session id for a workspace or creates a new Cursor chat on demand.
     pub fn get_or_create_blocking(&self, cwd: Option<&str>) -> Result<String, CursorSessionError> {
         let key = SessionKey::from_cwd(cwd)?;
@@ -97,6 +102,7 @@ fn create_chat_blocking() -> Result<String, CursorSessionError> {
 }
 
 /// Describes failures that can occur while resolving or creating Cursor chat sessions.
+#[allow(missing_docs)]
 #[derive(Debug, Error)]
 pub enum CursorSessionError {
     #[error("failed to create or resolve Cursor session: {0}")]

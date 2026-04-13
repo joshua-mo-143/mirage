@@ -98,6 +98,7 @@ impl PlaywrightArgs {
 }
 
 /// Supported browser actions exposed through the `playwright` tool.
+#[allow(missing_docs)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PlaywrightAction {
@@ -135,6 +136,7 @@ impl PlaywrightAction {
 }
 
 /// Supported Playwright navigation wait strategies.
+#[allow(missing_docs)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PlaywrightWaitUntil {
@@ -144,6 +146,7 @@ pub enum PlaywrightWaitUntil {
 }
 
 /// Structured result returned by the browser driver for a successful action.
+#[allow(missing_docs)]
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub struct PlaywrightResult {
     pub ok: bool,
@@ -160,6 +163,7 @@ pub struct PlaywrightResult {
 }
 
 /// Errors returned while resolving Mirage-managed Playwright filesystem paths.
+#[allow(missing_docs)]
 #[derive(Debug, Error)]
 pub enum PlaywrightPathError {
     #[error("unable to determine Mirage config directory for Playwright")]
@@ -171,6 +175,7 @@ pub enum PlaywrightPathError {
 }
 
 /// Describes whether the local Playwright runtime is available for Mirage to use.
+#[allow(missing_docs)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PlaywrightRuntimeStatus {
     Ready,
@@ -235,6 +240,7 @@ impl PlaywrightDriverResponse {
 }
 
 /// Errors returned while using the `playwright` browser automation tool.
+#[allow(missing_docs)]
 #[derive(Debug, Error)]
 pub enum PlaywrightToolError {
     #[error("invalid playwright arguments: {0}")]
@@ -429,10 +435,10 @@ pub fn playwright_driver_package_dir() -> PathBuf {
     if let Ok(path) = env::var("MIRAGE_PLAYWRIGHT_DRIVER_DIR") {
         return PathBuf::from(path);
     }
-    if let Ok(path) = env::var("MIRAGE_PLAYWRIGHT_DRIVER_ENTRY") {
-        if let Some(parent) = Path::new(&path).parent() {
-            return parent.to_path_buf();
-        }
+    if let Ok(path) = env::var("MIRAGE_PLAYWRIGHT_DRIVER_ENTRY")
+        && let Some(parent) = Path::new(&path).parent()
+    {
+        return parent.to_path_buf();
     }
 
     managed_playwright_driver_dir().unwrap_or_else(|_| PathBuf::from("playwright-driver"))
@@ -622,6 +628,7 @@ struct PlaywrightDriverProcess {
 }
 
 /// Errors returned while managing or talking to the Node Playwright driver process.
+#[allow(missing_docs)]
 #[derive(Debug, Error)]
 pub enum PlaywrightDriverClientError {
     #[error("failed to start playwright driver: {0}")]

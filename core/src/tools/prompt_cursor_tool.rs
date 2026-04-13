@@ -23,6 +23,7 @@ struct PromptCursorInvocation {
 }
 
 /// Errors returned while invoking the local Cursor CLI in print mode.
+#[allow(missing_docs)]
 #[derive(Debug, Error)]
 pub enum PromptCursorToolError {
     #[error("failed to start Cursor CLI: {0}")]

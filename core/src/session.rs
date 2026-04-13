@@ -6,6 +6,7 @@ use std::collections::HashMap;
 const DEFAULT_WELCOME_BODY: &str = "How can I help you today?";
 
 /// Categorizes transcript entries for rendering and serialization.
+#[allow(missing_docs)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TranscriptKind {
     Meta,
@@ -16,6 +17,7 @@ pub enum TranscriptKind {
 }
 
 /// Represents a single top-level transcript entry.
+#[allow(missing_docs)]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TranscriptEntry {
     pub kind: TranscriptKind,
@@ -84,6 +86,7 @@ impl TranscriptEntry {
 }
 
 /// Represents a top-level transcript item, including collapsible subagent groups.
+#[allow(missing_docs)]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TranscriptItem {
     Entry(TranscriptEntry),
@@ -117,6 +120,7 @@ impl TranscriptItem {
 }
 
 /// Tracks the lifecycle state of a subagent group.
+#[allow(missing_docs)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SubagentStatus {
     Running,
@@ -125,6 +129,7 @@ pub enum SubagentStatus {
 }
 
 /// Groups transcript entries produced by a child agent run.
+#[allow(missing_docs)]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SubagentGroup {
     pub summary: String,
@@ -155,6 +160,7 @@ impl SubagentGroup {
 }
 
 /// Describes streamed events emitted by a parent agent run.
+#[allow(missing_docs)]
 #[derive(Debug)]
 pub enum StreamEvent {
     AssistantText(String),
@@ -171,6 +177,7 @@ pub enum StreamEvent {
 }
 
 /// Describes streamed progress events emitted by a child agent run.
+#[allow(missing_docs)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SubagentProgressEvent {
     Started {
@@ -200,6 +207,7 @@ pub enum SubagentProgressEvent {
 }
 
 /// Serializable subset of local reducer state used to resume prior TUI conversations.
+#[allow(missing_docs)]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SessionPersistedState {
     pub transcript: Vec<TranscriptItem>,
@@ -235,6 +243,7 @@ struct ToolAggregate {
 }
 
 /// Reducer-backed session state shared by the TUI, service layer, and server snapshots.
+#[allow(missing_docs)]
 #[derive(Debug)]
 pub struct Session {
     pub transcript: Vec<TranscriptItem>,
@@ -371,10 +380,10 @@ impl Session {
                     return;
                 }
                 if let Some(index) = self.pending_assistant {
-                    if let Some(entry) = self.transcript.get_mut(index) {
-                        if let Some(entry) = entry.entry_mut() {
-                            entry.body.push_str(&text);
-                        }
+                    if let Some(entry) = self.transcript.get_mut(index)
+                        && let Some(entry) = entry.entry_mut()
+                    {
+                        entry.body.push_str(&text);
                     }
                 } else {
                     self.push_entry(TranscriptEntry::assistant(text));
@@ -442,11 +451,11 @@ impl Session {
                     if pending.pending_entry_index.is_none() && text.trim().is_empty() {
                         return;
                     }
-                    if let Some(index) = pending.pending_entry_index {
-                        if let Some(entry) = group.entries.get_mut(index) {
-                            entry.body.push_str(&text);
-                            return;
-                        }
+                    if let Some(index) = pending.pending_entry_index
+                        && let Some(entry) = group.entries.get_mut(index)
+                    {
+                        entry.body.push_str(&text);
+                        return;
                     }
 
                     group.entries.push(TranscriptEntry {
@@ -632,11 +641,11 @@ impl Session {
             pending.pending_tool_calls,
         );
 
-        if let Some(index) = pending.tool_entry_index {
-            if let Some(entry) = group.entries.get_mut(index) {
-                entry.title = title;
-                return;
-            }
+        if let Some(index) = pending.tool_entry_index
+            && let Some(entry) = group.entries.get_mut(index)
+        {
+            entry.title = title;
+            return;
         }
 
         group

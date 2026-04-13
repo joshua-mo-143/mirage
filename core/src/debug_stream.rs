@@ -103,6 +103,7 @@ impl StreamDebugLogger {
 }
 
 /// Describes failures that can occur while configuring or writing a stream debug log.
+#[allow(missing_docs)]
 #[derive(Debug, Error)]
 pub enum StreamDebugLoggerError {
     #[error("invalid stream debug log path")]

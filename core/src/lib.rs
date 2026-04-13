@@ -3,11 +3,17 @@
 //! Venice exposes an OpenAI-compatible chat completions API, so this crate keeps
 //! only the Venice-specific configuration layer and re-exports Rig's agent,
 //! tool, and prompting APIs for higher-level use.
+#![warn(missing_docs)]
 
+/// Shared JSONL stream-debug logging utilities.
 pub mod debug_stream;
+/// Reducer-backed session state and transcript modeling.
 pub mod session;
+/// Request-scoped skill loading, matching, and prompt assembly helpers.
 pub mod skills;
+/// Local tool implementations exposed to Mirage agents.
 pub mod tools;
+/// Venice provider configuration and client wrappers.
 pub mod venice;
 
 pub use rig::agent::{Agent, AgentBuilder, NoToolConfig, WithBuilderTools, WithToolServerHandle};

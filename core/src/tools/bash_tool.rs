@@ -22,6 +22,7 @@ struct BashInvocation {
 }
 
 /// Errors returned while executing a `bash` tool call.
+#[allow(missing_docs)]
 #[derive(Debug, Error)]
 pub enum BashToolError {
     #[error("failed to start bash: {0}")]

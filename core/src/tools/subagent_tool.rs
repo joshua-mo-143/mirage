@@ -36,6 +36,7 @@ struct SubagentInvocation {
 }
 
 /// Errors returned while running a child Cursor agent.
+#[allow(missing_docs)]
 #[derive(Debug, Error)]
 pub enum SubagentToolError {
     #[error("failed to spawn subagent: {0}")]

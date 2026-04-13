@@ -1,3 +1,7 @@
+//! Service-layer orchestration over the shared Mirage session reducer.
+#![warn(missing_docs)]
+
+/// Shared API DTOs used by the Mirage service and server crates.
 pub mod api;
 
 use crate::api::SessionSnapshot;
@@ -8,6 +12,7 @@ use mirage_core::{
 };
 
 /// Static configuration shared by a session service instance.
+#[allow(missing_docs)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ServiceConfig {
     pub model: String,
@@ -19,6 +24,7 @@ pub struct ServiceConfig {
 }
 
 /// Prompt submission payload returned when the service begins a new request.
+#[allow(missing_docs)]
 #[derive(Debug, Clone)]
 pub struct PromptRequest {
     pub prompt: String,
@@ -29,6 +35,7 @@ pub struct PromptRequest {
 }
 
 /// Read-only snapshot of the service configuration and derived session metadata.
+#[allow(missing_docs)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ServiceStatusSnapshot {
     pub model: String,

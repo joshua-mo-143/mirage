@@ -41,6 +41,7 @@ pub struct EditFileArgs {
 }
 
 /// Errors returned by the local file tools.
+#[allow(missing_docs)]
 #[derive(Debug, Error)]
 pub enum FileToolError {
     #[error("failed to access file: {0}")]
