@@ -1,8 +1,12 @@
-use crate::{Tool, completion::ToolDefinition};
+use crate::{
+    Tool,
+    completion::ToolDefinition,
+    tools::playwright_driver_assets::{PLAYWRIGHT_DRIVER_INDEX_JS, PLAYWRIGHT_DRIVER_PACKAGE_JSON},
+};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::{
-    env, io,
+    env, fs, io,
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -162,6 +166,8 @@ pub enum PlaywrightPathError {
     ConfigDirectoryUnavailable,
     #[error("unable to determine Mirage state directory for Playwright")]
     StateDirectoryUnavailable,
+    #[error("failed to prepare Mirage-managed Playwright driver files: {0}")]
+    Io(#[from] io::Error),
 }
 
 /// Describes whether the local Playwright runtime is available for Mirage to use.
@@ -401,17 +407,21 @@ pub fn playwright_screenshots_dir() -> Result<PathBuf, PlaywrightPathError> {
     Ok(playwright_state_root()?.join("screenshots"))
 }
 
-/// Returns the bundled Playwright driver template directory shipped with the Mirage repo.
-pub fn bundled_playwright_driver_dir() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .unwrap_or_else(|| Path::new("."))
-        .join("playwright-driver")
-}
-
 /// Returns the Mirage-managed Playwright driver directory under the user's config folder.
 pub fn managed_playwright_driver_dir() -> Result<PathBuf, PlaywrightPathError> {
     Ok(playwright_config_root()?.join("playwright-driver"))
+}
+
+/// Ensures Mirage's embedded Playwright driver assets are materialized into the managed driver directory.
+pub fn ensure_managed_playwright_driver_files() -> Result<PathBuf, PlaywrightPathError> {
+    let package_dir = managed_playwright_driver_dir()?;
+    fs::create_dir_all(&package_dir)?;
+    write_driver_asset_if_needed(
+        &package_dir.join("package.json"),
+        PLAYWRIGHT_DRIVER_PACKAGE_JSON,
+    )?;
+    write_driver_asset_if_needed(&package_dir.join("index.js"), PLAYWRIGHT_DRIVER_INDEX_JS)?;
+    Ok(package_dir)
 }
 
 /// Returns the package directory that contains the Node Playwright driver.
@@ -425,18 +435,7 @@ pub fn playwright_driver_package_dir() -> PathBuf {
         }
     }
 
-    if let Ok(path) = managed_playwright_driver_dir()
-        && path.join("index.js").is_file()
-    {
-        return path;
-    }
-
-    let bundled = bundled_playwright_driver_dir();
-    if bundled.join("index.js").is_file() {
-        return bundled;
-    }
-
-    managed_playwright_driver_dir().unwrap_or_else(|_| bundled_playwright_driver_dir())
+    managed_playwright_driver_dir().unwrap_or_else(|_| PathBuf::from("playwright-driver"))
 }
 
 /// Returns the Node driver entrypoint used by the Playwright tool.
@@ -450,6 +449,13 @@ pub fn playwright_driver_entrypoint_path() -> PathBuf {
 
 /// Checks whether Mirage's local Playwright runtime is ready to use.
 pub async fn playwright_runtime_status() -> PlaywrightRuntimeStatus {
+    if env::var("MIRAGE_PLAYWRIGHT_DRIVER_DIR").is_err()
+        && env::var("MIRAGE_PLAYWRIGHT_DRIVER_ENTRY").is_err()
+        && let Err(error) = ensure_managed_playwright_driver_files()
+    {
+        return PlaywrightRuntimeStatus::CheckFailed(error.to_string());
+    }
+
     let node_binary = node_binary();
     let entrypoint = playwright_driver_entrypoint_path();
     if !entrypoint.is_file() {
@@ -497,6 +503,16 @@ pub async fn playwright_runtime_status() -> PlaywrightRuntimeStatus {
             PlaywrightRuntimeStatus::MissingNode
         }
         Err(error) => PlaywrightRuntimeStatus::CheckFailed(error.to_string()),
+    }
+}
+
+/// Writes one embedded Playwright driver asset when it is missing or outdated.
+fn write_driver_asset_if_needed(path: &Path, content: &str) -> Result<(), io::Error> {
+    match fs::read_to_string(path) {
+        Ok(existing) if existing == content => Ok(()),
+        Ok(_) => fs::write(path, content),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => fs::write(path, content),
+        Err(error) => Err(error),
     }
 }
 
@@ -706,6 +722,9 @@ fn node_binary() -> String {
 #[cfg(test)]
 mod tests {
     use super::{PlaywrightAction, PlaywrightArgs};
+    use crate::tools::playwright_driver_assets::{
+        PLAYWRIGHT_DRIVER_INDEX_JS, PLAYWRIGHT_DRIVER_PACKAGE_JSON,
+    };
 
     /// Verifies that navigation requests require both a session id and URL.
     #[test]
@@ -742,5 +761,12 @@ mod tests {
         };
 
         assert!(args.validate().is_ok());
+    }
+
+    /// Verifies that the embedded Playwright driver assets are compiled into the Mirage binary.
+    #[test]
+    fn embeds_playwright_driver_assets() {
+        assert!(PLAYWRIGHT_DRIVER_INDEX_JS.contains("handleRequest"));
+        assert!(PLAYWRIGHT_DRIVER_PACKAGE_JSON.contains("\"playwright\""));
     }
 }

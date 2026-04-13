@@ -67,6 +67,10 @@ pub(crate) struct Args {
     #[arg(long, default_value_t = false)]
     pub(crate) restart_server: bool,
 
+    /// Reattach to the most recent persisted TUI conversation instead of starting fresh.
+    #[arg(long, default_value_t = false)]
+    pub(crate) resume_last: bool,
+
     /// Append raw streamed assistant/tool events as JSONL for debugging.
     #[arg(long, env = "MIRAGE_DEBUG_STREAM_LOG")]
     pub(crate) debug_stream_log: Option<String>,

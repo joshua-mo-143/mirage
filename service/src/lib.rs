@@ -3,7 +3,7 @@ pub mod api;
 use crate::api::SessionSnapshot;
 use mirage_core::{
     message::Message,
-    session::{Session, StreamEvent, SubagentProgressEvent},
+    session::{Session, SessionPersistedState, StreamEvent, SubagentProgressEvent},
     skills::{ResolvedSkill, prompt_with_resolved_skills},
 };
 
@@ -123,6 +123,12 @@ impl SessionService {
     ) {
         self.history_messages_override = None;
         self.session.clear_with_notice(transcript_notice, status);
+    }
+
+    /// Replaces the local reducer state with previously persisted session history and transcript data.
+    pub fn apply_persisted_state(&mut self, state: SessionPersistedState) {
+        self.history_messages_override = None;
+        self.session.replace_persisted_state(state);
     }
 
     /// Replaces the local reducer state with a remote session snapshot.

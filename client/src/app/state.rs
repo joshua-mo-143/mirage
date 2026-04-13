@@ -80,6 +80,19 @@ impl App {
         self.active_skill.as_ref().map(|skill| skill.name.as_str())
     }
 
+    /// Returns a clone of the currently active explicitly selected skill, if any.
+    pub(crate) fn active_skill(&self) -> Option<mirage_core::skills::ResolvedSkill> {
+        self.active_skill.clone()
+    }
+
+    /// Replaces the currently active explicitly selected skill.
+    pub(crate) fn set_active_skill(
+        &mut self,
+        active_skill: Option<mirage_core::skills::ResolvedSkill>,
+    ) {
+        self.active_skill = active_skill;
+    }
+
     /// Keeps the transcript selection pinned to the tail while the composer owns focus.
     pub(super) fn follow_transcript_tail_if_composing(&mut self) {
         if matches!(self.focus, FocusArea::Composer) {

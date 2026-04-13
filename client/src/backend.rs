@@ -1,4 +1,9 @@
-use crate::{args::Args, config::RemoteServerConfig, streaming::stream_agent_response};
+use crate::{
+    args::Args,
+    config::RemoteServerConfig,
+    resume::{PersistedLastSession, load_last_session, save_last_session},
+    streaming::stream_agent_response,
+};
 use futures::StreamExt;
 use mirage_core::{
     VeniceAgent, VeniceClient, VeniceConfig,
@@ -80,6 +85,86 @@ impl ClientBackend {
             Self::Remote(backend) => backend.clear_conversation(service),
         }
     }
+
+    /// Persists the current backend/session pair as the most recent resumable TUI conversation.
+    pub(crate) async fn persist_last_session(
+        &self,
+        service: &SessionService,
+        active_skill: Option<ResolvedSkill>,
+    ) -> Result<(), String> {
+        let record = match self {
+            Self::Local(_) => PersistedLastSession::Local {
+                session: service.session().persisted_state(),
+                active_skill,
+            },
+            Self::Remote(backend) => PersistedLastSession::Remote {
+                remote: RemoteServerConfig {
+                    server_url: backend.server_url.clone(),
+                    admin_api_key: backend.admin_api_key.clone(),
+                },
+                session_id: {
+                    let state = backend.session_state.lock().await;
+                    state.session_id.clone()
+                },
+                active_skill,
+            },
+        };
+
+        save_last_session(&record)
+            .map(|_| ())
+            .map_err(|error| format!("failed to save last session: {error}"))
+    }
+
+    /// Reattaches this backend to the previously persisted conversation when the backend type is compatible.
+    pub(crate) fn reattach_last_session(
+        &mut self,
+        service: &mut SessionService,
+    ) -> Result<Option<ResolvedSkill>, String> {
+        let Some(record) =
+            load_last_session().map_err(|error| format!("failed to load last session: {error}"))?
+        else {
+            return Err("no previous Mirage TUI conversation was saved".to_owned());
+        };
+
+        match (self, record) {
+            (
+                Self::Local(_),
+                PersistedLastSession::Local {
+                    session,
+                    active_skill,
+                },
+            ) => {
+                service.apply_persisted_state(session);
+                service.session_mut().status = "Reattached to the last local Mirage conversation."
+                    .to_owned();
+                Ok(active_skill)
+            }
+            (
+                Self::Remote(backend),
+                PersistedLastSession::Remote {
+                    remote,
+                    session_id,
+                    active_skill,
+                },
+            ) => {
+                service.session_mut().streaming = true;
+                service.session_mut().status =
+                    "Reattaching to the last remote Mirage conversation...".to_owned();
+                backend.server_url = remote.server_url.clone();
+                backend.admin_api_key = remote.admin_api_key.clone();
+                backend.reattach_to_existing_session(remote, session_id);
+                Ok(active_skill)
+            }
+            (Self::Local(_), PersistedLastSession::Remote { .. }) => Err(
+                "the last saved conversation belongs to a remote Mirage server; restart with `--resume-last` to restore it"
+                    .to_owned(),
+            ),
+            (Self::Remote(_), PersistedLastSession::Local { .. }) => Err(
+                "the last saved conversation belongs to a local Mirage session; restart with `--local --resume-last` to restore it"
+                    .to_owned(),
+            ),
+        }
+    }
 }
 
 /// Builds either a local or remote backend along with its initial service state.
@@ -88,9 +173,11 @@ pub(crate) async fn build_backend(
     cursor_sessions: Arc<CursorSessionStore>,
     tx: mpsc::UnboundedSender<BackendEvent>,
     remote: Option<RemoteServerConfig>,
+    resume_remote_session_id: Option<String>,
 ) -> Result<(SessionService, ClientBackend), Box<dyn Error>> {
     if let Some(remote) = remote {
-        let (service, backend) = RemoteBackend::connect(args, remote, tx).await?;
+        let (service, backend) =
+            RemoteBackend::connect(args, remote, resume_remote_session_id, tx).await?;
         return Ok((service, ClientBackend::Remote(backend)));
     }
 
@@ -354,11 +441,23 @@ impl RemoteBackend {
     async fn connect(
         args: &Args,
         remote: RemoteServerConfig,
+        resume_remote_session_id: Option<String>,
         tx: mpsc::UnboundedSender<BackendEvent>,
     ) -> Result<(SessionService, Self), Box<dyn Error>> {
         let http_client = reqwest::Client::new();
         let system_prompt = args.system_prompt.clone();
-        let snapshot = create_remote_session(&http_client, &remote, system_prompt.clone()).await?;
+        let snapshot = match resume_remote_session_id {
+            Some(session_id) => {
+                fetch_remote_session(
+                    &http_client,
+                    &remote.server_url,
+                    &remote.admin_api_key,
+                    &session_id,
+                )
+                .await?
+            }
+            None => create_remote_session(&http_client, &remote, system_prompt.clone()).await?,
+        };
         let mut service = SessionService::new(service_config_from_snapshot(&snapshot), None);
         service.apply_remote_snapshot(snapshot.clone());
 
@@ -376,6 +475,47 @@ impl RemoteBackend {
         backend.restart_events_stream(snapshot.id).await;
 
         Ok((service, backend))
+    }
+
+    /// Switches the remote backend to an already existing remote session and refreshes its snapshot.
+    fn reattach_to_existing_session(&self, remote: RemoteServerConfig, session_id: String) {
+        let http_client = self.http_client.clone();
+        let session_state = Arc::clone(&self.session_state);
+        let tx = self.tx.clone();
+
+        tokio::spawn(async move {
+            match fetch_remote_session(
+                &http_client,
+                &remote.server_url,
+                &remote.admin_api_key,
+                &session_id,
+            )
+            .await
+            {
+                Ok(snapshot) => {
+                    if let Err(error) = replace_remote_session(
+                        &http_client,
+                        &remote.server_url,
+                        &remote.admin_api_key,
+                        session_state,
+                        tx.clone(),
+                        session_id,
+                    )
+                    .await
+                    {
+                        let _ = tx.send(BackendEvent::RemoteError(error));
+                        return;
+                    }
+
+                    let _ = tx.send(BackendEvent::RemoteSnapshot(snapshot));
+                }
+                Err(error) => {
+                    let _ = tx.send(BackendEvent::RemoteError(format!(
+                        "failed to reattach to remote session: {error}"
+                    )));
+                }
+            }
+        });
     }
 
     /// Submits a prompt to the currently selected remote session.
@@ -514,6 +654,22 @@ async fn create_remote_session(
         .send()
         .await
         .map_err(|error| format!("failed to create remote session: {error}"))?;
+    parse_json_response(response).await
+}
+
+/// Fetches an existing remote session snapshot through the Mirage server API.
+async fn fetch_remote_session(
+    http_client: &reqwest::Client,
+    server_url: &str,
+    admin_api_key: &str,
+    session_id: &str,
+) -> Result<SessionSnapshot, String> {
+    let response = http_client
+        .get(api_url(server_url, &format!("/sessions/{session_id}")))
+        .bearer_auth(admin_api_key)
+        .send()
+        .await
+        .map_err(|error| format!("failed to fetch remote session: {error}"))?;
     parse_json_response(response).await
 }
 

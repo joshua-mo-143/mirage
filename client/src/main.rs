@@ -2,6 +2,7 @@ mod app;
 mod args;
 mod backend;
 mod config;
+mod resume;
 mod skills;
 mod streaming;
 mod transcript;
@@ -13,8 +14,8 @@ use futures::StreamExt;
 use mirage_core::tools::{
     cursor_session::CursorSessionStore,
     playwright_tool::{
-        PlaywrightRuntimeStatus, bundled_playwright_driver_dir, managed_playwright_driver_dir,
-        playwright_browsers_dir, playwright_runtime_status,
+        PlaywrightRuntimeStatus, ensure_managed_playwright_driver_files, playwright_browsers_dir,
+        playwright_runtime_status,
     },
 };
 use reqwest::Url;
@@ -31,6 +32,7 @@ use crate::{
     args::Args,
     backend::{BackendEvent, StopServerMethod, build_backend, launch_local_server, stop_server},
     config::{ClientConfig, RemoteServerConfig, maybe_prompt_to_save_remote},
+    resume::{PersistedLastSession, load_last_session},
     tui::Tui,
 };
 
@@ -49,6 +51,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
     }
 
     let mut client_config = ClientConfig::load_or_default()?;
+    let requested_resume = if args.resume_last {
+        Some(load_last_session()?.ok_or("no previous Mirage TUI conversation was saved")?)
+    } else {
+        None
+    };
     if args.stop_server {
         let remote = remote_config_for_start(&args, &client_config);
         let stop_result = stop_server(&remote).await?;
@@ -105,25 +112,74 @@ async fn main() -> Result<(), Box<dyn Error>> {
         None
     };
 
-    let remote = resolve_remote_config(&args, &client_config, launched_remote)?;
+    let remote = resolve_remote_config(
+        &args,
+        &client_config,
+        launched_remote,
+        requested_resume.as_ref(),
+    )?;
+    let resume_remote_session_id = match requested_resume.as_ref() {
+        Some(PersistedLastSession::Remote { session_id, .. }) if remote.is_some() => {
+            Some(session_id.clone())
+        }
+        _ => None,
+    };
     if should_preflight_local_playwright(remote.as_ref()) {
         maybe_prepare_local_playwright_runtime().await?;
     }
     let cursor_sessions = Arc::new(CursorSessionStore::default());
     let (tx, mut rx) = mpsc::unbounded_channel();
-    let (service, mut backend) =
-        build_backend(&args, cursor_sessions.clone(), tx.clone(), remote).await?;
+    let (mut service, mut backend) = build_backend(
+        &args,
+        cursor_sessions.clone(),
+        tx.clone(),
+        remote,
+        resume_remote_session_id,
+    )
+    .await?;
+    let resumed_active_skill = match requested_resume.as_ref() {
+        Some(PersistedLastSession::Local {
+            session,
+            active_skill,
+        }) => {
+            if !matches!(backend, crate::backend::ClientBackend::Local(_)) {
+                return Err(
+                    "the last saved Mirage conversation was local; restart with `--local --resume-last`"
+                        .into(),
+                );
+            }
+            service.apply_persisted_state(session.clone());
+            service.session_mut().status =
+                "Reattached to the last local Mirage conversation.".to_owned();
+            active_skill.clone()
+        }
+        Some(PersistedLastSession::Remote { active_skill, .. }) => {
+            if !matches!(backend, crate::backend::ClientBackend::Remote(_)) {
+                return Err(
+                    "the last saved Mirage conversation was remote; restart without `--local` when using `--resume-last`"
+                        .into(),
+                );
+            }
+            active_skill.clone()
+        }
+        None => None,
+    };
     let mut app = App::from_service(
         service,
         args.prompt.clone().unwrap_or_default(),
         cursor_sessions,
         backend.description(),
     );
+    if args.resume_last {
+        app.set_active_skill(resumed_active_skill);
+    }
     let mut tui = Tui::new()?;
     let mut events = EventStream::new();
 
     if app.can_submit() {
-        app.process_enter(&mut backend);
+        if app.process_enter(&mut backend) {
+            persist_last_session(&backend, &app).await;
+        }
     }
 
     while !app.should_quit {
@@ -133,7 +189,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
             maybe_event = events.next() => {
                 match maybe_event {
                     Some(Ok(Event::Key(key))) if key.kind.is_press() => {
-                        app.handle_key(key, &mut backend);
+                        if app.handle_key(key, &mut backend) {
+                            persist_last_session(&backend, &app).await;
+                        }
                     }
                     Some(Ok(Event::Mouse(mouse))) => {
                         app.handle_mouse(mouse);
@@ -142,6 +200,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                     Some(Ok(_)) => {}
                     Some(Err(error)) => {
                         app.apply_remote_error(format!("terminal event error: {error}"));
+                        persist_last_session(&backend, &app).await;
                     }
                     None => break,
                 }
@@ -154,10 +213,12 @@ async fn main() -> Result<(), Box<dyn Error>> {
                     Some(BackendEvent::RemoteError(error)) => app.apply_remote_error(error),
                     None => break,
                 }
+                persist_last_session(&backend, &app).await;
             }
         }
     }
 
+    persist_last_session(&backend, &app).await;
     Ok(())
 }
 
@@ -166,6 +227,7 @@ fn resolve_remote_config(
     args: &Args,
     client_config: &ClientConfig,
     launched_remote: Option<RemoteServerConfig>,
+    requested_resume: Option<&PersistedLastSession>,
 ) -> Result<Option<RemoteServerConfig>, Box<dyn Error>> {
     if args.local {
         return Ok(None);
@@ -175,14 +237,24 @@ fn resolve_remote_config(
         return Ok(Some(remote));
     }
 
+    if matches!(requested_resume, Some(PersistedLastSession::Local { .. }))
+        && args.server_url.is_none()
+        && args.admin_key.is_none()
+    {
+        return Ok(None);
+    }
+
     let saved = client_config.remote.as_ref();
+    let resumed_remote = requested_resume.and_then(resume_remote_config);
     let server_url = args
         .server_url
         .clone()
+        .or_else(|| resumed_remote.map(|remote| remote.server_url.clone()))
         .or_else(|| saved.map(|remote| remote.server_url.clone()));
     let admin_api_key = args
         .admin_key
         .clone()
+        .or_else(|| resumed_remote.map(|remote| remote.admin_api_key.clone()))
         .or_else(|| saved.map(|remote| remote.admin_api_key.clone()));
 
     match (server_url, admin_api_key) {
@@ -195,6 +267,24 @@ fn resolve_remote_config(
             Err("Mirage server URL is configured but no admin key was provided or saved".into())
         }
         (None, Some(_)) => Err("Mirage admin key was provided without a server URL".into()),
+    }
+}
+
+/// Returns the saved remote configuration embedded in a persisted resume record, if any.
+fn resume_remote_config(session: &PersistedLastSession) -> Option<&RemoteServerConfig> {
+    match session {
+        PersistedLastSession::Remote { remote, .. } => Some(remote),
+        PersistedLastSession::Local { .. } => None,
+    }
+}
+
+/// Persists the current TUI session as the latest conversation Mirage can reattach to later.
+async fn persist_last_session(backend: &crate::backend::ClientBackend, app: &App) {
+    if let Err(error) = backend
+        .persist_last_session(&app.service, app.active_skill())
+        .await
+    {
+        eprintln!("{error}");
     }
 }
 
@@ -280,16 +370,9 @@ async fn maybe_prepare_local_playwright_runtime() -> Result<(), Box<dyn Error>> 
 
 /// Installs the managed local Playwright runtime used by Mirage.
 async fn install_local_playwright_runtime() -> Result<(), Box<dyn Error>> {
-    let bundled_dir = bundled_playwright_driver_dir();
-    let package_dir = managed_playwright_driver_dir()?;
+    let package_dir = ensure_managed_playwright_driver_files()?;
     let browsers_dir = playwright_browsers_dir()?;
-    std::fs::create_dir_all(&package_dir)?;
     std::fs::create_dir_all(&browsers_dir)?;
-    std::fs::copy(
-        bundled_dir.join("package.json"),
-        package_dir.join("package.json"),
-    )?;
-    std::fs::copy(bundled_dir.join("index.js"), package_dir.join("index.js"))?;
 
     let npm_status = Command::new("npm")
         .arg("install")

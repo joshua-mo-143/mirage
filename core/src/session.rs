@@ -199,6 +199,14 @@ pub enum SubagentProgressEvent {
     },
 }
 
+/// Serializable subset of local reducer state used to resume prior TUI conversations.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SessionPersistedState {
+    pub transcript: Vec<TranscriptItem>,
+    pub history: Vec<Message>,
+    pub status: String,
+}
+
 /// Internal bookkeeping for an in-flight subagent group.
 #[derive(Debug)]
 struct PendingSubagent {
@@ -301,6 +309,27 @@ impl Session {
             )));
         self.streaming = false;
         self.status = status.into();
+    }
+
+    /// Replaces the reducer state with previously persisted local session state.
+    pub fn replace_persisted_state(&mut self, state: SessionPersistedState) {
+        self.transcript = state.transcript;
+        self.history = state.history;
+        self.status = state.status;
+        self.streaming = false;
+        self.usage = None;
+        self.pending_assistant = None;
+        self.pending_subagents.clear();
+        self.clear_active_tool_aggregates();
+    }
+
+    /// Captures the serializable subset of reducer state used for local TUI resume.
+    pub fn persisted_state(&self) -> SessionPersistedState {
+        SessionPersistedState {
+            transcript: self.transcript.clone(),
+            history: self.history.clone(),
+            status: self.status.clone(),
+        }
     }
 
     /// Replaces the reducer state with a remote session snapshot payload.
@@ -833,7 +862,10 @@ fn truncate_text(value: &str, max_chars: usize) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{Session, StreamEvent, SubagentProgressEvent, TranscriptItem, TranscriptKind};
+    use super::{
+        Session, SessionPersistedState, StreamEvent, SubagentProgressEvent, TranscriptItem,
+        TranscriptKind,
+    };
 
     /// Creates a session configured to accept streamed events for reducer-focused tests.
     fn streaming_session() -> Session {
@@ -1191,5 +1223,28 @@ mod tests {
             session.transcript[0].entry().unwrap().body,
             "Conversation cleared, including Cursor session state."
         );
+    }
+
+    /// Verifies that persisted local session state can be restored without reviving in-flight markers.
+    #[test]
+    fn restores_persisted_local_state() {
+        let mut session = streaming_session();
+        session.apply_stream_event(StreamEvent::AssistantText("Done.".to_owned()));
+        session.streaming = false;
+        session.status = "Ready.".to_owned();
+
+        let persisted = session.persisted_state();
+
+        let mut restored = Session::new(None);
+        restored.replace_persisted_state(SessionPersistedState {
+            transcript: persisted.transcript,
+            history: persisted.history,
+            status: persisted.status,
+        });
+
+        assert_eq!(restored.transcript, session.transcript);
+        assert_eq!(restored.history, session.history);
+        assert_eq!(restored.status, "Ready.");
+        assert!(!restored.streaming);
     }
 }
