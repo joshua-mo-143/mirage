@@ -31,6 +31,7 @@ fn test_args() -> Args {
         restart_server: false,
         resume_last: false,
         debug_stream_log: None,
+        run_server: false,
     }
 }
 

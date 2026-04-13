@@ -257,8 +257,7 @@ impl IntoResponse for ApiError {
 type ApiResult<T> = Result<Json<T>, ApiError>;
 
 /// Starts the Mirage Axum server and the in-process scheduler.
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn Error>> {
+pub async fn run() -> Result<(), Box<dyn Error>> {
     let server_config = ServerConfig::from_env()?;
     let (shutdown_tx, shutdown_rx) = oneshot::channel();
     let stream_debug_logger =
@@ -303,6 +302,12 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .with_graceful_shutdown(shutdown_signal(shutdown_rx))
         .await?;
     Ok(())
+}
+
+/// Starts the Mirage Axum server and the in-process scheduler.
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn Error>> {
+    run().await
 }
 
 /// Waits for either Ctrl+C or an authenticated shutdown request.
@@ -750,9 +755,29 @@ async fn run_prompt(
         let _ = runtime.events_tx.send(snapshot);
 
         if is_terminal {
-            break;
+            return;
         }
     }
+
+    let event = StreamEvent::Error(
+        "assistant stream ended before Mirage received a final response".to_owned(),
+    );
+    if let Some(debug_logger) = &state.stream_debug_logger
+        && let Err(error) = debug_logger.log_stream_event("server", Some(&session_id), &event)
+    {
+        eprintln!(
+            "failed to write server stream debug event to {}: {}",
+            debug_logger.path().display(),
+            error
+        );
+    }
+
+    let snapshot = {
+        let mut service = runtime.service.lock().await;
+        service.apply_stream_event(event);
+        snapshot_from_service(&session_id, &service)
+    };
+    let _ = runtime.events_tx.send(snapshot);
 }
 
 /// Begins a prompt on an existing runtime and broadcasts the updated streaming snapshot.
@@ -798,7 +823,7 @@ fn build_agent(
 - Prefer discovering capabilities by using `bash` instead of assuming what commands, binaries, files, or directories are available.
 - Use `bash` freely for arbitrary shell commands, environment inspection, and capability discovery.
 - Use `playwright` for headless browser automation when a task needs webpage interaction, form filling, visible text extraction, or screenshots.
-- Use `subagent` when you want to delegate a deeper investigation or planning task to a child Cursor agent and incorporate its final answer.
+- Prefer `subagent` for longer tasks that will require reading files, exploring code, or taking multiple tool-calling turns; use it to delegate deeper investigation or planning to a child Cursor agent and incorporate its final answer.
 - Use `read_file` to inspect files before editing them when needed.
 - Prefer `edit_file` for modifying part of an existing file.
 - Use `write_file` only when creating a new file, replacing an entire file, or appending whole-file content intentionally.

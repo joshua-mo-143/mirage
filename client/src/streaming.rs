@@ -65,10 +65,24 @@ pub(crate) async fn stream_agent_response(
 
         let is_terminal = matches!(event, StreamEvent::Final(_) | StreamEvent::Error(_));
         if tx.send(BackendEvent::Stream(event)).is_err() {
-            break;
+            return;
         }
         if is_terminal {
-            break;
+            return;
         }
     }
+
+    let event = StreamEvent::Error(
+        "assistant stream ended before Mirage received a final response".to_owned(),
+    );
+    if let Some(debug_logger) = &debug_logger
+        && let Err(error) = debug_logger.log_stream_event("client-local", None, &event)
+    {
+        eprintln!(
+            "failed to write client stream debug event to {}: {}",
+            debug_logger.path().display(),
+            error
+        );
+    }
+    let _ = tx.send(BackendEvent::Stream(event));
 }

@@ -88,7 +88,9 @@ impl Tool for SubagentTool {
     async fn definition(&self, _prompt: String) -> ToolDefinition {
         ToolDefinition {
             name: Self::NAME.to_owned(),
-            description: "Spawn a child Cursor agent for a delegated task, stream its progress into Mirage, and return the child agent's final answer.".to_owned(),
+            description: "Spawn a child agent for a delegated task, stream its progress into Mirage, and return the child agent's final answer.
+
+                Prefer this for longer tasks that will involve reading files, exploring code, or taking multiple tool-calling turns.".to_owned(),
             parameters: json!({
                 "type": "object",
                 "properties": {

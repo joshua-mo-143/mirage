@@ -212,6 +212,15 @@ pub(crate) async fn launch_local_server(
     )
     .map(|_| Duration::from_secs(15))
         .or_else(|primary_error| {
+            spawn_current_exe_server_command(&bind_addr, &remote.admin_api_key, debug_stream_log)
+                .map(|_| Duration::from_secs(15))
+                .map_err(|fallback_error| {
+                    format!(
+                        "failed to launch `mirage-server` ({primary_error}); current executable fallback also failed ({fallback_error})"
+                    )
+                })
+        })
+        .or_else(|primary_error| {
             let Some(workspace_root) = workspace_root() else {
                 return Err(primary_error);
             };
@@ -347,7 +356,7 @@ impl LocalBackend {
 - Prefer discovering capabilities by using `bash` instead of assuming what commands, binaries, files, or directories are available.
 - Use `bash` freely for arbitrary shell commands, environment inspection, and capability discovery.
 - Use `playwright` for headless browser automation when a task needs webpage interaction, form filling, visible text extraction, or screenshots.
-- Use `subagent` when you want to delegate a deeper investigation or planning task to a child Cursor agent and incorporate its final answer.
+- Prefer `subagent` for longer tasks that will require reading files, exploring code, or taking multiple tool-calling turns; use it to delegate deeper investigation or planning to a child Cursor agent and incorporate its final answer.
 - Use `read_file` to inspect files before editing them when needed.
 - Prefer `edit_file` for modifying part of an existing file.
 - Use `write_file` only when creating a new file, replacing an entire file, or appending whole-file content intentionally.
@@ -732,65 +741,87 @@ async fn stream_remote_session_events(
     session_id: String,
     tx: mpsc::UnboundedSender<BackendEvent>,
 ) {
-    let response = match http_client
-        .get(api_url(
-            &server_url,
-            &format!("/sessions/{session_id}/events"),
-        ))
-        .bearer_auth(&admin_api_key)
-        .send()
-        .await
-    {
-        Ok(response) => response,
-        Err(error) => {
+    loop {
+        let response = match http_client
+            .get(api_url(
+                &server_url,
+                &format!("/sessions/{session_id}/events"),
+            ))
+            .bearer_auth(&admin_api_key)
+            .send()
+            .await
+        {
+            Ok(response) => response,
+            Err(error) => {
+                let _ = tx.send(BackendEvent::RemoteError(format!(
+                    "remote event stream connection failed: {error}"
+                )));
+                return;
+            }
+        };
+
+        if !response.status().is_success() {
+            let error = decode_error_response(response)
+                .await
+                .unwrap_or_else(|message| message);
             let _ = tx.send(BackendEvent::RemoteError(format!(
-                "remote event stream connection failed: {error}"
+                "remote event stream failed: {error}"
             )));
             return;
         }
-    };
 
-    if !response.status().is_success() {
-        let error = decode_error_response(response)
-            .await
-            .unwrap_or_else(|message| message);
-        let _ = tx.send(BackendEvent::RemoteError(format!(
-            "remote event stream failed: {error}"
-        )));
-        return;
-    }
+        let mut stream = response.bytes_stream();
+        let mut buffer = String::new();
 
-    let mut stream = response.bytes_stream();
-    let mut buffer = String::new();
+        while let Some(chunk) = stream.next().await {
+            match chunk {
+                Ok(chunk) => {
+                    buffer.push_str(&String::from_utf8_lossy(&chunk));
+                    while let Some(frame) = take_next_sse_frame(&mut buffer) {
+                        let Some(data) = extract_sse_data(&frame) else {
+                            continue;
+                        };
 
-    while let Some(chunk) = stream.next().await {
-        match chunk {
-            Ok(chunk) => {
-                buffer.push_str(&String::from_utf8_lossy(&chunk));
-                while let Some(frame) = take_next_sse_frame(&mut buffer) {
-                    let Some(data) = extract_sse_data(&frame) else {
-                        continue;
-                    };
-
-                    match serde_json::from_str::<SessionSnapshot>(&data) {
-                        Ok(snapshot) => {
-                            let _ = tx.send(BackendEvent::RemoteSnapshot(snapshot));
-                        }
-                        Err(error) => {
-                            let _ = tx.send(BackendEvent::RemoteError(format!(
-                                "failed to parse remote snapshot: {error}"
-                            )));
+                        match serde_json::from_str::<SessionSnapshot>(&data) {
+                            Ok(snapshot) => {
+                                let _ = tx.send(BackendEvent::RemoteSnapshot(snapshot));
+                            }
+                            Err(error) => {
+                                let _ = tx.send(BackendEvent::RemoteError(format!(
+                                    "failed to parse remote snapshot: {error}"
+                                )));
+                            }
                         }
                     }
                 }
+                Err(error) => {
+                    let _ = tx.send(BackendEvent::RemoteError(format!(
+                        "remote event stream error: {error}"
+                    )));
+                    return;
+                }
+            }
+        }
+
+        match fetch_remote_session(&http_client, &server_url, &admin_api_key, &session_id).await {
+            Ok(snapshot) => {
+                if snapshot.streaming {
+                    let _ = tx.send(BackendEvent::RemoteError(
+                        "remote event stream closed before Mirage signaled completion".to_owned(),
+                    ));
+                    return;
+                }
+                let _ = tx.send(BackendEvent::RemoteSnapshot(snapshot));
             }
             Err(error) => {
                 let _ = tx.send(BackendEvent::RemoteError(format!(
-                    "remote event stream error: {error}"
+                    "remote event stream closed unexpectedly: {error}"
                 )));
                 return;
             }
         }
+
+        sleep(Duration::from_millis(250)).await;
     }
 }
 
@@ -972,16 +1003,23 @@ fn is_local_server_url(server_url: &str) -> bool {
 
 /// Attempts to terminate local Mirage server processes using `pkill`.
 fn kill_local_server_processes() -> Result<bool, Box<dyn Error>> {
+    let killed_server_bin = kill_local_server_process_pattern("mirage-server")?;
+    let killed_embedded = kill_local_server_process_pattern("mirage --run-server")?;
+    Ok(killed_server_bin || killed_embedded)
+}
+
+/// Attempts to terminate local Mirage server processes whose command line matches a pattern.
+fn kill_local_server_process_pattern(pattern: &str) -> Result<bool, Box<dyn Error>> {
     let output = std::process::Command::new("pkill")
         .arg("-f")
-        .arg("mirage-server")
+        .arg(pattern)
         .output()?;
 
     match output.status.code().unwrap_or(-1) {
         0 => Ok(true),
         1 => Ok(false),
         status => Err(format!(
-            "pkill failed with status {status}: {}",
+            "pkill failed for pattern `{pattern}` with status {status}: {}",
             String::from_utf8_lossy(&output.stderr).trim()
         )
         .into()),
@@ -997,6 +1035,30 @@ fn spawn_server_command(
 ) -> Result<(), String> {
     let mut command = Command::new(command_name);
     command
+        .env("MIRAGE_SERVER_BIND", bind_addr)
+        .env("MIRAGE_ADMIN_API_KEY", admin_api_key)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    if let Some(path) = debug_stream_log {
+        command.env("MIRAGE_DEBUG_STREAM_LOG", path);
+    }
+    command
+        .spawn()
+        .map(|_| ())
+        .map_err(|error| error.to_string())
+}
+
+/// Spawns the current `mirage` executable in hidden server mode.
+fn spawn_current_exe_server_command(
+    bind_addr: &str,
+    admin_api_key: &str,
+    debug_stream_log: Option<&str>,
+) -> Result<(), String> {
+    let executable = env::current_exe().map_err(|error| error.to_string())?;
+    let mut command = Command::new(executable);
+    command
+        .arg("--run-server")
         .env("MIRAGE_SERVER_BIND", bind_addr)
         .env("MIRAGE_ADMIN_API_KEY", admin_api_key)
         .stdin(Stdio::null())

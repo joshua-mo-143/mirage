@@ -43,6 +43,9 @@ use crate::{
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
     let args = Args::parse();
+    if args.run_server {
+        return mirage_server::run().await;
+    }
     if args.local && (args.start_server || args.stop_server || args.restart_server) {
         return Err(
             "`--local` cannot be combined with `--start-server`, `--stop-server`, or `--restart-server`"

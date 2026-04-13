@@ -388,6 +388,7 @@ dependencies = [
  "crossterm",
  "futures",
  "mirage-core",
+ "mirage-server",
  "mirage-service",
  "ratatui",
  "reqwest",

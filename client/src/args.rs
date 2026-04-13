@@ -74,4 +74,8 @@ pub(crate) struct Args {
     /// Append raw streamed assistant/tool events as JSONL for debugging.
     #[arg(long, env = "MIRAGE_DEBUG_STREAM_LOG")]
     pub(crate) debug_stream_log: Option<String>,
+
+    /// Internal-only mode used to run the embedded Mirage server runtime.
+    #[arg(long, hide = true, default_value_t = false)]
+    pub(crate) run_server: bool,
 }
